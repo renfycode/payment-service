@@ -58,9 +58,11 @@ services:
     <<: *app
     build: .
     # Миграции применяются перед стартом API; consumer ждёт healthy api.
+    # exec: uvicorn заменяет shell и сам получает SIGTERM, иначе lifespan не завершится
+    # корректно (outbox relay, соединения с БД и брокером).
     command: >
       sh -c "alembic upgrade head &&
-             uvicorn payments.api.app:create_app --factory --host 0.0.0.0 --port 8000"
+             exec uvicorn payments.api.app:create_app --factory --host 0.0.0.0 --port 8000"
     ports:
       - "8000:8000"
     depends_on:
