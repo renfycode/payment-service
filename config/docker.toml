@@ -1,0 +1,39 @@
+# docker compose: сервисы обращаются друг к другу по именам в сети compose.
+# Секреты передаются через окружение в docker-compose.yml.
+
+[database]
+host = "postgres"
+port = 5432
+name = "payments"
+user = "payments"
+
+[rabbitmq]
+host = "rabbitmq"
+port = 5672
+vhost = "/"
+user = "payments"
+
+[outbox]
+poll_interval = 1.0
+batch_size = 100
+max_backoff = 30.0
+
+[consumer]
+prefetch = 10
+
+[retry]
+max_attempts = 3
+base_delay = 2.0
+
+[gateway]
+min_delay = 2.0
+max_delay = 5.0
+success_rate = 0.90
+decline_rate = 0.07
+
+[webhook]
+timeout = 10.0
+
+[logging]
+level = "INFO"
+format = "pretty"

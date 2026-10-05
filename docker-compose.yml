@@ -1,0 +1,129 @@
+# Фиксированное имя проекта: не зависит от имени каталога с репозиторием.
+name: payments
+
+x-app: &app
+  # Один образ на api и consumer, отличаются только командой запуска.
+  # Собирает его api, consumer использует готовый.
+  image: payments-service:local
+  restart: unless-stopped
+  # С TTY loguru раскрашивает вывод, и docker compose logs остаются цветными.
+  tty: true
+  # Несекретная конфигурация — config/docker.toml. Каталог смонтирован, чтобы правки
+  # применялись перезапуском контейнера, без пересборки образа.
+  volumes:
+    - ./config:/app/config:ro
+  environment:
+    PAYMENTS_CONFIG: /app/config/docker.toml
+    # Секреты. Значения по умолчанию годятся только для локального стенда;
+    # переопределяются переменными окружения при запуске compose.
+    PAYMENTS__API__KEY: ${PAYMENTS_API_KEY:-dev-api-key}
+    PAYMENTS__WEBHOOK__SECRET: &webhook-secret ${PAYMENTS_WEBHOOK_SECRET:-whsec_MRVnyabDOXIn1GLmVyP2VeXwy/Ts+AwO}
+    PAYMENTS__DATABASE__PASSWORD: ${POSTGRES_PASSWORD:-payments}
+    PAYMENTS__RABBITMQ__PASSWORD: ${RABBITMQ_PASSWORD:-payments}
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      # Имена пользователя и базы совпадают с config/docker.toml.
+      POSTGRES_USER: payments
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-payments}
+      POSTGRES_DB: payments
+    ports:
+      - "5432:5432" # для локального запуска приложения с config/local.toml
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:4.1-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: payments
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-payments}
+    ports:
+      - "5672:5672" # для локального запуска приложения с config/local.toml
+      - "15672:15672" # management UI
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  api:
+    <<: *app
+    build: .
+    # Миграции применяются перед стартом API; consumer ждёт healthy api.
+    # Одна команда без shell-обёртки: процесс сам получает SIGTERM и корректно
+    # завершает lifespan (outbox relay, соединения с БД и брокером).
+    command: ["payments", "api", "--host", "0.0.0.0", "--port", "8000", "--migrate"]
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  consumer:
+    <<: *app
+    pull_policy: never
+    command: ["payments", "consumer"]
+    # /health проверяет подключение consumer к RabbitMQ; порт доступен только внутри контейнера.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"
+      interval: 10s
+      timeout: 6s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
+  # Тестовый получатель webhook для make local-smoke: проверяет подпись и запоминает
+  # доставки. Запускается только с профилем smoke (docker compose --profile smoke …).
+  webhook-receiver:
+    profiles: ["smoke"]
+    build: ./tests/integration/webhook_receiver
+    environment:
+      WEBHOOK_SECRET: *webhook-secret
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"
+      interval: 2s
+      timeout: 2s
+      retries: 10
+
+volumes:
+  postgres-data:
+  rabbitmq-data:

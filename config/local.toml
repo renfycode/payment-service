@@ -1,0 +1,43 @@
+# Локальный запуск: приложение на хосте, Postgres и RabbitMQ — из docker compose.
+#   export PAYMENTS_CONFIG=config/local.toml
+#
+# Секреты в этом файле запрещены, задайте их через окружение:
+#   PAYMENTS__API__KEY, PAYMENTS__WEBHOOK__SECRET,
+#   PAYMENTS__DATABASE__PASSWORD, PAYMENTS__RABBITMQ__PASSWORD
+
+[database]
+host = "localhost"
+port = 5432
+name = "payments"
+user = "payments"
+
+[rabbitmq]
+host = "localhost"
+port = 5672
+vhost = "/"
+user = "payments"
+
+[outbox]
+poll_interval = 1.0
+batch_size = 100
+max_backoff = 30.0
+
+[consumer]
+prefetch = 10
+
+[retry]
+max_attempts = 3
+base_delay = 2.0
+
+[gateway]
+min_delay = 2.0
+max_delay = 5.0
+success_rate = 0.90
+decline_rate = 0.07
+
+[webhook]
+timeout = 10.0
+
+[logging]
+level = "DEBUG"
+format = "pretty"
