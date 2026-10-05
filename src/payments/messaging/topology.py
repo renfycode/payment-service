@@ -90,13 +90,24 @@ def retry_queue(delay_ms: int) -> RabbitQueue:
     )
 
 
-async def declare_topology(broker: RabbitBroker, retry_delays_ms: tuple[int, ...]) -> None:
-    """Идемпотентно объявляет exchange, очереди и привязки. Брокер должен быть подключён."""
+async def declare_topology(
+    broker: RabbitBroker,
+    retry_delays_ms: tuple[int, ...],
+    *,
+    include_new_payments_queue: bool = True,
+) -> None:
+    """Идемпотентно объявляет exchange, очереди и привязки. Брокер должен быть подключён.
+
+    include_new_payments_queue=False — для consumer: payments.new объявляет его подписчик.
+    FastStream кэширует объявленные очереди без учёта канала, и очередь, объявленная здесь
+    через канал по умолчанию, досталась бы подписчику вместо его канала с prefetch.
+    """
     for exchange in (PAYMENTS_EXCHANGE, RETRY_EXCHANGE, DEAD_LETTER_EXCHANGE):
         await broker.declare_exchange(exchange)
 
+    main_queue = [(new_payments_queue(), PAYMENTS_EXCHANGE)] if include_new_payments_queue else []
     bindings = [
-        (new_payments_queue(), PAYMENTS_EXCHANGE),
+        *main_queue,
         (dead_letter_queue(), DEAD_LETTER_EXCHANGE),
         *((retry_queue(delay), RETRY_EXCHANGE) for delay in sorted(set(retry_delays_ms))),
     ]

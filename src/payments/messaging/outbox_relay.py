@@ -72,7 +72,7 @@ class OutboxRelay:
                 await asyncio.sleep(self._poll_interval)
 
     def backoff(self, failures: int) -> float:
-        return min(self._poll_interval * 2**failures, self._max_backoff)
+        return min(self._poll_interval * 2.0**failures, self._max_backoff)
 
     async def publish_batch(self) -> BatchResult:
         """Публикует одну пачку. На первой ошибке останавливается: брокер, скорее всего,

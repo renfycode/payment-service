@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import random
 from typing import Literal, Protocol
 from uuid import UUID
@@ -22,7 +23,22 @@ class PaymentGateway(Protocol):
         ...
 
 
+def stable_fraction(payment_id: UUID) -> float:
+    """Число в [0, 1), постоянное для payment_id: одинаковое между вызовами, рестартами
+    и репликами consumer."""
+    digest = hashlib.sha256(payment_id.bytes).digest()
+    return int.from_bytes(digest[:8]) / 2**64
+
+
 class EmulatedPaymentGateway:
+    """Эмулятор шлюза.
+
+    Как настоящий шлюз с ключом идемпотентности, на повторный запрос по тому же payment_id
+    он отвечает тем же итогом (succeeded/failed): итог выводится из payment_id.
+    Технический сбой, наоборот, случаен на каждый вызов — иначе повтор никогда бы
+    не помог. Доли исходов при первом вызове: success_rate / decline_rate / остаток.
+    """
+
     def __init__(
         self,
         *,
@@ -40,9 +56,9 @@ class EmulatedPaymentGateway:
 
     async def charge(self, payment_id: UUID) -> ChargeResult:
         await asyncio.sleep(self._rng.uniform(self._min_delay, self._max_delay))
-        roll = self._rng.random()
-        if roll < self._success_rate:
+        answered = self._success_rate + self._decline_rate
+        if self._rng.random() >= answered:
+            raise GatewayUnavailableError(f"Gateway is temporarily unavailable ({payment_id})")
+        if stable_fraction(payment_id) < self._success_rate / answered:
             return PaymentStatus.SUCCEEDED
-        if roll < self._success_rate + self._decline_rate:
-            return PaymentStatus.FAILED
-        raise GatewayUnavailableError(f"Gateway is temporarily unavailable ({payment_id})")
+        return PaymentStatus.FAILED

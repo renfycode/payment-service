@@ -1,22 +1,24 @@
 """CLI сервиса: payments --help."""
 
-import asyncio
 from typing import Annotated
 
 import typer
 import uvicorn
 from alembic import command
 
-from payments.cli import config, db, dlq
+from payments.cli import config, db, dlq, outbox
 from payments.cli.common import load_settings, new_typer, setup_logging
 from payments.consumer.app import create_app as create_consumer
 from payments.containers import ConsumerContainer
 from payments.db.migrate import alembic_config
 
-app = new_typer("Payments service: run processes, manage migrations, configuration and DLQ.")
+app = new_typer(
+    "Payments service: run processes, manage migrations, configuration, DLQ and outbox."
+)
 app.add_typer(db.app, name="db")
 app.add_typer(config.app, name="config")
 app.add_typer(dlq.app, name="dlq")
+app.add_typer(outbox.app, name="outbox")
 
 
 @app.command()
@@ -45,7 +47,17 @@ def api(
 
 
 @app.command()
-def consumer() -> None:
-    """Run the payments.new consumer."""
+def consumer(
+    host: Annotated[str, typer.Option(help="Bind address of the health endpoint.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(help="Port of the health endpoint (GET /health).")] = 8001,
+) -> None:
+    """Run the payments.new consumer with a health endpoint for container checks."""
     settings = load_settings()
-    asyncio.run(create_consumer(ConsumerContainer(settings=settings)).run())
+    setup_logging(settings)
+    uvicorn.run(
+        create_consumer(ConsumerContainer(settings=settings)),
+        host=host,
+        port=port,
+        log_config=None,
+        access_log=False,  # healthcheck дёргается каждые несколько секунд
+    )

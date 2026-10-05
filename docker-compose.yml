@@ -86,6 +86,17 @@ services:
     <<: *app
     pull_policy: never
     command: ["payments", "consumer"]
+    # /health проверяет подключение consumer к RabbitMQ; порт доступен только внутри контейнера.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"
+      interval: 10s
+      timeout: 6s
+      retries: 3
+      start_period: 10s
     depends_on:
       postgres:
         condition: service_healthy

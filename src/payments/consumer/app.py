@@ -2,7 +2,9 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
-from faststream import AckPolicy, FastStream
+from faststream import AckPolicy
+from faststream.asgi import AsgiFastStream, make_ping_asgi
+from faststream.rabbit import Channel
 from faststream.rabbit.annotations import RabbitMessage
 
 from payments.config import Settings
@@ -36,7 +38,11 @@ def parse_retry_headers(headers: Mapping[str, Any]) -> tuple[Stage | None, int]:
     return stage, attempt
 
 
-def create_app(container: ConsumerContainer | None = None) -> FastStream:
+# Проверка здоровья: consumer подключён к RabbitMQ (ping брокера не дольше 5 с).
+HEALTH_PATH = "/health"
+
+
+def create_app(container: ConsumerContainer | None = None) -> AsgiFastStream:
     if container is None:
         # Обязательные секреты приходят из окружения — pyright этого не видит.
         container = ConsumerContainer(settings=Settings())  # pyright: ignore[reportCallIssue]
@@ -47,8 +53,12 @@ def create_app(container: ConsumerContainer | None = None) -> FastStream:
 
     # Если обработчик упал необработанным исключением (например, тело не прошло валидацию),
     # сообщение отклоняется и через DLX очереди попадает в DLQ, а не крутится бесконечно.
+    # prefetch ограничивает число сообщений, которые экземпляр обрабатывает одновременно.
     @broker.subscriber(
-        new_payments_queue(), PAYMENTS_EXCHANGE, ack_policy=AckPolicy.REJECT_ON_ERROR
+        new_payments_queue(),
+        PAYMENTS_EXCHANGE,
+        channel=Channel(prefetch_count=settings.consumer.prefetch),
+        ack_policy=AckPolicy.REJECT_ON_ERROR,
     )
     async def handle_payment_created(event: PaymentCreatedEvent, message: RabbitMessage) -> None:
         stage, attempt = parse_retry_headers(message.headers)
@@ -92,14 +102,19 @@ def create_app(container: ConsumerContainer | None = None) -> FastStream:
         # До старта брокера: подписчик начнёт получать сообщения уже с готовыми ресурсами.
         await init_resources(container)
         await broker.connect()
-        await declare_topology(broker, container.core.retry_policy().delays_ms)
+        # payments.new объявит подписчик — со своим каналом и prefetch.
+        await declare_topology(
+            broker, container.core.retry_policy().delays_ms, include_new_payments_queue=False
+        )
 
     async def after_shutdown() -> None:
         # После остановки брокера: обработчики завершены, ресурсы можно закрывать.
         await shutdown_resources(container)
 
-    return FastStream(
+    # ASGI-приложение: тот же FastStream плюс HTTP-эндпоинт для healthcheck контейнера.
+    return AsgiFastStream(
         broker,
+        asgi_routes=[(HEALTH_PATH, make_ping_asgi(broker, timeout=5.0, include_in_schema=False))],
         logger=logging.getLogger("faststream.app"),
         on_startup=[on_startup],
         after_shutdown=[after_shutdown],

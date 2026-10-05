@@ -13,7 +13,7 @@ import pytest
 from alembic import command
 from asgi_lifespan import LifespanManager
 from dependency_injector import providers
-from faststream import FastStream
+from faststream.asgi import AsgiFastStream
 from pydantic import SecretStr
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -66,7 +66,8 @@ def postgres() -> Iterator[PostgresContainer]:
 
 @pytest.fixture(scope="session")
 def rabbitmq() -> Iterator[RabbitMqContainer]:
-    with RabbitMqContainer("rabbitmq:4.1-management-alpine") as container:
+    # 15672 — management API: тесты проверяют, что реально видит брокер (prefetch и т. п.).
+    with RabbitMqContainer("rabbitmq:4.1-management-alpine").with_exposed_ports(15672) as container:
         yield container
 
 
@@ -111,6 +112,11 @@ def rabbitmq_settings(rabbitmq: RabbitMqContainer) -> RabbitMQSettings:
         user=rabbitmq.username,
         password=SecretStr(rabbitmq.password),
     )
+
+
+@pytest.fixture(scope="session")
+def rabbitmq_management_url(rabbitmq: RabbitMqContainer) -> str:
+    return f"http://{rabbitmq.get_container_host_ip()}:{rabbitmq.get_exposed_port(15672)}"
 
 
 @pytest.fixture(scope="session")
@@ -190,7 +196,7 @@ async def api(settings: Settings) -> AsyncIterator[httpx.AsyncClient]:
         yield client
 
 
-type StartConsumer = Callable[..., Awaitable[FastStream]]
+type StartConsumer = Callable[..., Awaitable[AsgiFastStream]]
 
 SUCCESSFUL_GATEWAY = StaticGateway(PaymentStatus.SUCCEEDED)
 
@@ -199,9 +205,9 @@ SUCCESSFUL_GATEWAY = StaticGateway(PaymentStatus.SUCCEEDED)
 async def start_consumer(settings: Settings) -> AsyncIterator[StartConsumer]:
     """Запускает consumer. Шлюз подменяется детерминированной заглушкой через override
     провайдера; по умолчанию все платежи проходят успешно и без задержки."""
-    started: list[FastStream] = []
+    started: list[AsgiFastStream] = []
 
-    async def start(*, gateway: PaymentGateway = SUCCESSFUL_GATEWAY) -> FastStream:
+    async def start(*, gateway: PaymentGateway = SUCCESSFUL_GATEWAY) -> AsgiFastStream:
         container = ConsumerContainer(settings=settings)
         container.gateway.override(providers.Object(gateway))
         app = create_consumer(container)

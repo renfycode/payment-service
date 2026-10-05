@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from payments.db.models import OutboxMessage, Payment
@@ -65,3 +65,20 @@ class OutboxRepository:
             .with_for_update(skip_locked=True)
         )
         return (await self._session.scalars(stmt)).all()
+
+    async def count_published_before(self, cutoff: datetime) -> int:
+        stmt = select(func.count()).where(OutboxMessage.published_at < cutoff)
+        return (await self._session.execute(stmt)).scalar_one()
+
+    async def delete_published_before(self, cutoff: datetime, limit: int) -> int:
+        """Удаляет до limit опубликованных событий старше cutoff. Неопубликованные
+        не трогаются никогда: это события, ещё не доставленные в брокер."""
+        batch = (
+            select(OutboxMessage.id)
+            .where(OutboxMessage.published_at < cutoff)
+            .order_by(OutboxMessage.published_at)
+            .limit(limit)
+        )
+        stmt = delete(OutboxMessage).where(OutboxMessage.id.in_(batch))
+        result = await self._session.execute(stmt)
+        return int(result.rowcount)  # type: ignore[attr-defined]

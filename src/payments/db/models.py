@@ -69,6 +69,12 @@ class OutboxMessage(Base):
             "created_at",
             postgresql_where=text("published_at IS NULL"),
         ),
+        # Для очистки опубликованных событий (payments outbox cleanup).
+        Index(
+            "ix_outbox_published_at",
+            "published_at",
+            postgresql_where=text("published_at IS NOT NULL"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
