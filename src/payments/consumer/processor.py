@@ -1,9 +1,10 @@
-import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
+
+from loguru import logger
 
 from payments.consumer.gateway import PaymentGateway
 from payments.db.models import Payment
@@ -11,8 +12,6 @@ from payments.db.session import SessionFactory
 from payments.db.uow import UnitOfWork
 from payments.domain import PaymentStatus
 from payments.messaging.retry import RetryPolicy
-
-logger = logging.getLogger(__name__)
 
 
 class Stage(StrEnum):
@@ -67,7 +66,7 @@ class SqlPaymentStore:
             updated = await uow.payments.finalize(payment_id, status, datetime.now(UTC))
             await uow.commit()
             if not updated:
-                logger.info("Payment %s was already finalized concurrently", payment_id)
+                logger.info("Payment was already finalized concurrently")
             payment = await uow.payments.get(payment_id)
         if payment is None:
             raise RuntimeError(f"Payment {payment_id} disappeared")
@@ -96,10 +95,15 @@ class PaymentProcessor:
 
     async def process(self, payment_id: UUID, stage: Stage | None, attempt: int) -> Outcome:
         """stage и attempt — этап и номер попытки из заголовков сообщения (None для первой)."""
+        with logger.contextualize(payment_id=str(payment_id)):
+            return await self._process(payment_id, stage, attempt)
+
+    async def _process(self, payment_id: UUID, stage: Stage | None, attempt: int) -> Outcome:
         current = stage or Stage.GATEWAY
         try:
             payment = await self._store.get(payment_id)
             if payment is None:
+                logger.error("Payment not found")
                 return DeadLetter(current, attempt, f"Payment {payment_id} not found")
 
             if payment.status is PaymentStatus.PENDING:
@@ -111,36 +115,23 @@ class PaymentProcessor:
         except Exception as exc:
             # Счётчик попыток сбрасывается, если упал не тот этап, что в заголовках.
             stage_attempt = attempt if current == stage else 1
-            return self._on_failure(payment_id, current, stage_attempt, exc)
+            return self._on_failure(current, stage_attempt, exc)
 
-        logger.info("Payment %s processed, webhook delivered", payment_id)
+        logger.success("Payment processed, webhook delivered")
         return Ack()
 
     async def _charge(self, payment: Payment) -> Payment:
         result = await self._gateway.charge(payment.id)
         finalized = await self._store.finalize(payment.id, result)
-        logger.info("Payment %s finalized as %s", payment.id, finalized.status)
+        logger.info("Payment finalized as {}", finalized.status)
         return finalized
 
-    def _on_failure(
-        self, payment_id: UUID, stage: Stage, attempt: int, exc: Exception
-    ) -> Retry | DeadLetter:
+    def _on_failure(self, stage: Stage, attempt: int, exc: Exception) -> Retry | DeadLetter:
         delay_ms = self._retry_policy.delay_after(attempt)
-        if delay_ms is None:
-            logger.error(
-                "Payment %s: stage %s failed after %d attempt(s): %r",
-                payment_id,
-                stage,
-                attempt,
-                exc,
-            )
-            return DeadLetter(stage, attempt, repr(exc))
-        logger.warning(
-            "Payment %s: stage %s attempt %d failed, retry in %d ms: %r",
-            payment_id,
-            stage,
-            attempt,
-            delay_ms,
-            exc,
-        )
-        return Retry(stage, attempt + 1, delay_ms)
+        attempts = f"{attempt}/{self._retry_policy.max_attempts}"
+        with logger.contextualize(stage=stage.value, attempt=attempts):
+            if delay_ms is None:
+                logger.error("Attempts exhausted, sending to DLQ: {!r}", exc)
+                return DeadLetter(stage, attempt, repr(exc))
+            logger.warning("Attempt failed, retry in {} ms: {!r}", delay_ms, exc)
+            return Retry(stage, attempt + 1, delay_ms)

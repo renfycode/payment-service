@@ -1,15 +1,13 @@
 import asyncio
-import logging
 from datetime import UTC, datetime
 
 from faststream.rabbit import RabbitBroker
+from loguru import logger
 
 from payments.db.models import OutboxMessage
 from payments.db.session import SessionFactory
 from payments.db.uow import UnitOfWork
 from payments.messaging.topology import EVENT_ROUTES
-
-logger = logging.getLogger(__name__)
 
 
 class OutboxRelay:
@@ -56,14 +54,16 @@ class OutboxRelay:
                 except Exception as exc:
                     message.attempts += 1
                     message.last_error = repr(exc)
-                    logger.warning("Failed to publish outbox message %s: %r", message.id, exc)
+                    logger.bind(outbox_id=str(message.id)).warning(
+                        "Failed to publish outbox message: {!r}", exc
+                    )
                     # Брокер, скорее всего, недоступен: не долбим его остатком пачки.
                     break
                 message.published_at = datetime.now(UTC)
                 published += 1
             await uow.commit()
         if published:
-            logger.info("Published %d outbox message(s)", published)
+            logger.info("Published {} outbox message(s)", published)
         return published
 
     async def _publish(self, message: OutboxMessage) -> None:

@@ -1,6 +1,5 @@
 import asyncio
 import os
-from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import pool
@@ -8,11 +7,14 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from payments.db.models import Base
+from payments.logging_config import configure_logging
 
 config = context.config
 
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name, disable_existing_loggers=False)
+configure_logging(
+    os.environ.get("LOG_LEVEL", "INFO"),
+    json=os.environ.get("LOG_JSON", "").lower() in {"1", "true", "yes"},
+)
 
 target_metadata = Base.metadata
 

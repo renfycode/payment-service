@@ -1,14 +1,17 @@
 x-app: &app
   # Один образ на api и consumer, отличаются только командой запуска.
+  # Собирает его api, consumer использует готовый.
   image: payments-service:local
-  build: .
   restart: unless-stopped
+  # С TTY loguru раскрашивает вывод, и docker compose logs остаются цветными.
+  tty: true
   environment:
     API_KEY: ${API_KEY:?set API_KEY in .env}
     WEBHOOK_SECRET: ${WEBHOOK_SECRET:?set WEBHOOK_SECRET in .env}
     DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-payments}:${POSTGRES_PASSWORD:-payments}@postgres:5432/${POSTGRES_DB:-payments}
     RABBITMQ_URL: amqp://${RABBITMQ_USER:-payments}:${RABBITMQ_PASSWORD:-payments}@rabbitmq:5672/
     LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    LOG_JSON: ${LOG_JSON:-false}
 
 services:
   postgres:
@@ -44,6 +47,7 @@ services:
 
   api:
     <<: *app
+    build: .
     # Миграции применяются перед стартом API; consumer ждёт healthy api.
     command: >
       sh -c "alembic upgrade head &&
@@ -68,6 +72,7 @@ services:
 
   consumer:
     <<: *app
+    pull_policy: never
     command: ["python", "-m", "payments.consumer"]
     depends_on:
       postgres:

@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     webhook_timeout: float = Field(default=10.0, gt=0)
 
     log_level: str = "INFO"
+    # JSON-логи (одна запись на строку) вместо цветного человекочитаемого вывода.
+    log_json: bool = False
 
     @model_validator(mode="after")
     def _check_gateway(self) -> Self:

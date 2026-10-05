@@ -2,7 +2,7 @@
 
 Микросервис асинхронной обработки платежей. Принимает запрос на оплату, проводит его через эмулятор платёжного шлюза и уведомляет клиента о результате через webhook.
 
-**Стек:** Python 3.13, FastAPI + Pydantic v2, SQLAlchemy 2.0 (async) + asyncpg, PostgreSQL 17, RabbitMQ 4 (FastStream), Alembic, Docker Compose, uv.
+**Стек:** Python 3.13, FastAPI + Pydantic v2, SQLAlchemy 2.0 (async) + asyncpg, PostgreSQL 17, RabbitMQ 4 (FastStream), Alembic, loguru, Docker Compose, uv.
 
 ## Быстрый старт
 
@@ -157,6 +157,21 @@ def verify(secret: str, headers: dict[str, str], body: bytes) -> bool:
 
 **Аутентификация.** Статический ключ в `X-API-Key`, сравнение за постоянное время (`secrets.compare_digest`).
 
+### Логирование
+
+Весь вывод идёт через [loguru] — и код сервиса, и библиотеки на стандартном `logging` (uvicorn, FastStream, Alembic, SQLAlchemy): их записи перехватываются и оформляются так же. К записям consumer привязан контекст: `payment_id`, этап и номер попытки, а у сообщений FastStream — `exchange`, `queue`, `message_id`. По `payment_id` удобно собрать всю историю платежа:
+
+```
+2026-10-05 10:07:22.110 │ INFO     │ faststream.rabbit │ Received exchange=payments queue=payments.new message_id=01a10b88-…
+2026-10-05 10:07:26.500 │ INFO     │ payments.consumer.processor:_charge:126 │ Payment finalized as succeeded payment_id=01a10b88-…
+2026-10-05 10:07:26.506 │ WARNING  │ payments.consumer.processor:_on_failure:136 │ Attempt failed, retry in 2000 ms: WebhookDeliveryError('Webhook endpoint responded 500') payment_id=01a10b88-… stage=webhook attempt=1/3
+2026-10-05 10:07:28.523 │ SUCCESS  │ payments.consumer.processor:_process:120 │ Payment processed, webhook delivered payment_id=01a10b88-…
+```
+
+`LOG_JSON=true` включает компактный JSON для сборщиков логов (Loki, ELK): `timestamp`, `level`, `logger`, `message`, контекст и `exception` с трейсбеком. Значения переменных в трейсбеках не выводятся (`diagnose=False`), чтобы в логи не утекали секреты и данные платежей. Запросы healthcheck в access-лог не пишутся.
+
+[loguru]: https://github.com/Delgan/loguru
+
 ### Известные компромиссы
 
 - Состояние доставки webhook в БД не хранится (строго по ТЗ). Поэтому при повторной доставке сообщения с уже финализированным платежом webhook отправится ещё раз; получатель дедуплицирует по `webhook-id`.
@@ -180,6 +195,7 @@ def verify(secret: str, headers: dict[str, str], body: bytes) -> bool:
 | `WEBHOOK_TIMEOUT` | `10.0` | Таймаут запроса webhook, секунды |
 | `OUTBOX_POLL_INTERVAL` / `OUTBOX_BATCH_SIZE` | `1.0` / `100` | |
 | `LOG_LEVEL` | `INFO` | |
+| `LOG_JSON` | `false` | JSON-логи (одна запись на строку) вместо цветного вывода |
 
 ## Разработка
 

@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Mapping
 from typing import Any
 
@@ -49,10 +50,12 @@ def parse_retry_headers(headers: Mapping[str, Any]) -> tuple[Stage | None, int]:
 
 def create_app(settings: Settings | None = None) -> FastStream:
     settings = settings or Settings()
-    configure_logging(settings.log_level)
+    configure_logging(settings.log_level, json=settings.log_json)
 
     retry_policy = RetryPolicy(settings.max_attempts, settings.retry_base_delay)
-    broker = RabbitBroker(settings.rabbitmq_url)
+    # Логгеры стандартного logging без своих обработчиков: записи FastStream
+    # всплывают в корневой логгер и оформляются loguru (см. logging_config).
+    broker = RabbitBroker(settings.rabbitmq_url, logger=logging.getLogger("faststream.rabbit"))
     engine = create_engine(settings.database_url)
     http_client = httpx.AsyncClient(timeout=settings.webhook_timeout, follow_redirects=False)
     processor = PaymentProcessor(
@@ -114,4 +117,9 @@ def create_app(settings: Settings | None = None) -> FastStream:
         await http_client.aclose()
         await engine.dispose()
 
-    return FastStream(broker, on_startup=[on_startup], after_shutdown=[after_shutdown])
+    return FastStream(
+        broker,
+        logger=logging.getLogger("faststream.app"),
+        on_startup=[on_startup],
+        after_shutdown=[after_shutdown],
+    )

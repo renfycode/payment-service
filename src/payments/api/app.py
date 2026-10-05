@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import logging
 from collections.abc import AsyncIterator
 
 from fastapi import FastAPI, Request, status
@@ -16,12 +15,10 @@ from payments.messaging.outbox_relay import OutboxRelay
 from payments.messaging.retry import RetryPolicy
 from payments.messaging.topology import declare_topology
 
-logger = logging.getLogger(__name__)
-
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
-    configure_logging(settings.log_level)
+    configure_logging(settings.log_level, json=settings.log_json)
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

@@ -1,12 +1,9 @@
 import asyncio
-import logging
 import random
 from typing import Literal, Protocol
 from uuid import UUID
 
 from payments.domain import PaymentStatus
-
-logger = logging.getLogger(__name__)
 
 type ChargeResult = Literal[PaymentStatus.SUCCEEDED, PaymentStatus.FAILED]
 
