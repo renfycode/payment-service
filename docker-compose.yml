@@ -1,3 +1,6 @@
+# Фиксированное имя проекта: не зависит от имени каталога с репозиторием.
+name: payments
+
 x-app: &app
   # Один образ на api и consumer, отличаются только командой запуска.
   # Собирает его api, consumer использует готовый.
@@ -14,7 +17,7 @@ x-app: &app
     # Секреты. Значения по умолчанию годятся только для локального стенда;
     # переопределяются переменными окружения при запуске compose.
     PAYMENTS__API__KEY: ${PAYMENTS_API_KEY:-dev-api-key}
-    PAYMENTS__WEBHOOK__SECRET: ${PAYMENTS_WEBHOOK_SECRET:-whsec_MRVnyabDOXIn1GLmVyP2VeXwy/Ts+AwO}
+    PAYMENTS__WEBHOOK__SECRET: &webhook-secret ${PAYMENTS_WEBHOOK_SECRET:-whsec_MRVnyabDOXIn1GLmVyP2VeXwy/Ts+AwO}
     PAYMENTS__DATABASE__PASSWORD: ${POSTGRES_PASSWORD:-payments}
     PAYMENTS__RABBITMQ__PASSWORD: ${RABBITMQ_PASSWORD:-payments}
 
@@ -90,6 +93,25 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
+
+  # Тестовый получатель webhook для make local-smoke: проверяет подпись и запоминает
+  # доставки. Запускается только с профилем smoke (docker compose --profile smoke …).
+  webhook-receiver:
+    profiles: ["smoke"]
+    build: ./tests/integration/webhook_receiver
+    environment:
+      WEBHOOK_SECRET: *webhook-secret
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"
+      interval: 2s
+      timeout: 2s
+      retries: 10
 
 volumes:
   postgres-data:

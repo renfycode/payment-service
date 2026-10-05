@@ -7,8 +7,21 @@
 ## Быстрый старт
 
 ```bash
-docker compose up -d --build --wait
+make local-start    # собрать и поднять весь стек в Docker
+make local-smoke    # проверить его целиком: платёж → обработка → подписанный webhook
 ```
+
+| Команда | Что делает |
+|---|---|
+| `make local-start` | собирает образ и поднимает postgres, rabbitmq, api, consumer; ждёт, пока все станут healthy |
+| `make local-smoke` | поднимает стек вместе с тестовым получателем webhook и прогоняет smoke-тест |
+| `make local-logs` | логи api и consumer в реальном времени |
+| `make local-stop` | останавливает стек, данные (БД, очереди) сохраняются |
+| `make local-clean` | останавливает стек и удаляет тома с данными |
+
+Smoke-тест (`scripts/smoke.py`) проходит путь платежа через публичные интерфейсы: проверяет доступность API и получателя, отказ без `X-API-Key`, создание платежа и идемпотентный повтор, финальный статус, доставку webhook нужного типа с валидной подписью. При ошибке он сообщает, на каком шаге она произошла, и завершается с кодом 1. Получатель webhook — тот же контейнер, что в интеграционных тестах; в compose он подключён под профилем `smoke` и при обычном запуске не поднимается.
+
+Без `make` то же самое делается напрямую: `docker compose up -d --build --wait`.
 
 Конфигурация берётся из `config/docker.toml`. Секреты для локального стенда заданы в `docker-compose.yml` значениями по умолчанию: API-ключ `dev-api-key`, секрет подписи webhook `whsec_MRVnyabDOXIn1GLmVyP2VeXwy/Ts+AwO`, пароли Postgres и RabbitMQ `payments`. Переопределить их можно переменными окружения при запуске: `PAYMENTS_API_KEY`, `PAYMENTS_WEBHOOK_SECRET`, `POSTGRES_PASSWORD`, `RABBITMQ_PASSWORD`.
 
@@ -268,6 +281,7 @@ def verify(secret: str, headers: dict[str, str], body: bytes) -> bool:
 | `make test-integration` | интеграционные тесты (нужен Docker) |
 | `make test` | все тесты |
 | `make ci` | всё, что должно проходить в CI: `check` + `test` |
+| `make local-*` | локальный стек в Docker, см. «Быстрый старт» |
 
 Аргументы pytest передаются через `PYTEST_ARGS`, например `make test PYTEST_ARGS="-k idempotency -x"`.
 
@@ -314,5 +328,6 @@ src/payments/
 ├── config.py       # настройки: TOML + секреты из окружения
 └── containers.py   # DI-контейнеры: сборка зависимостей и ресурсов
 config/             # TOML-конфигурация по окружениям
+scripts/smoke.py    # smoke-тест запущенного стека (make local-smoke)
 tests/{unit,integration}
 ```
