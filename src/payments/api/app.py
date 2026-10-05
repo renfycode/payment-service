@@ -17,7 +17,8 @@ from payments.messaging.topology import declare_topology
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
-    settings = settings or Settings()
+    # Обязательные секреты приходят из окружения — pyright этого не видит.
+    settings = settings or Settings()  # pyright: ignore[reportCallIssue]
     configure_logging(settings.log_level, json=settings.log_json)
 
     @contextlib.asynccontextmanager

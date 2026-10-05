@@ -15,6 +15,7 @@ from alembic import command
 from alembic.config import Config
 from asgi_lifespan import LifespanManager
 from faststream import FastStream
+from pydantic import SecretStr
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from testcontainers.community.postgres import PostgresContainer
@@ -94,8 +95,8 @@ def settings(database_url: str, rabbitmq_url: str) -> Settings:
     return Settings(
         database_url=database_url,
         rabbitmq_url=rabbitmq_url,
-        api_key=API_KEY,
-        webhook_secret=WEBHOOK_SECRET,
+        api_key=SecretStr(API_KEY),
+        webhook_secret=SecretStr(WEBHOOK_SECRET),
         outbox_poll_interval=0.1,
         retry_base_delay=RETRY_BASE_DELAY,
         gateway_min_delay=0,

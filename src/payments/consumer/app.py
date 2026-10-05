@@ -49,7 +49,8 @@ def parse_retry_headers(headers: Mapping[str, Any]) -> tuple[Stage | None, int]:
 
 
 def create_app(settings: Settings | None = None) -> FastStream:
-    settings = settings or Settings()
+    # Обязательные секреты приходят из окружения — pyright этого не видит.
+    settings = settings or Settings()  # pyright: ignore[reportCallIssue]
     configure_logging(settings.log_level, json=settings.log_json)
 
     retry_policy = RetryPolicy(settings.max_attempts, settings.retry_base_delay)
