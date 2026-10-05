@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
+    "aio-pika>=10.1.0",
     "alembic>=1.20.0",
     "asyncpg>=0.31.0",
     "dependency-injector>=4.49.1",
@@ -18,9 +19,13 @@ dependencies = [
     "pydantic>=2",
     "pydantic-settings>=2.15.0",
     "sqlalchemy[asyncio]>=2.0,<2.1",
+    "typer>=0.27.2",
     "uuid-utils>=1.0.0",
     "uvicorn[standard]>=0.54.0",
 ]
+
+[project.scripts]
+payments = "payments.cli:app"
 
 [build-system]
 requires = ["uv_build>=0.11.8,<0.12.0"]
@@ -56,6 +61,8 @@ pythonVersion = "3.13"
 [tool.mypy]
 python_version = "3.13"
 strict = true
+# Имена файлов миграций (0001_initial.py) — не валидные имена модулей.
+exclude = ["src/payments/migrations/versions/"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]

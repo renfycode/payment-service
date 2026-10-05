@@ -2,7 +2,7 @@
 
 Микросервис асинхронной обработки платежей. Принимает запрос на оплату, проводит его через эмулятор платёжного шлюза и уведомляет клиента о результате через webhook.
 
-**Стек:** Python 3.13, FastAPI + Pydantic v2, SQLAlchemy 2.0 (async) + asyncpg, PostgreSQL 17, RabbitMQ 4 (FastStream), Alembic, dependency-injector, loguru, Docker Compose, uv.
+**Стек:** Python 3.13, FastAPI + Pydantic v2, SQLAlchemy 2.0 (async) + asyncpg, PostgreSQL 17, RabbitMQ 4 (FastStream), Alembic, dependency-injector, Typer, loguru, Docker Compose, uv.
 
 ## Быстрый старт
 
@@ -20,7 +20,35 @@ docker compose up -d --build --wait
 | PostgreSQL | `localhost:5432` (для запуска приложения на хосте) |
 | RabbitMQ AMQP | `localhost:5672` (для запуска приложения на хосте) |
 
-Миграции применяются автоматически при старте контейнера `api`.
+Миграции применяются автоматически при старте контейнера `api` (`payments api --migrate`).
+
+## Командная строка
+
+Все процессы и служебные операции запускаются одной командой `payments`: в образе она доступна напрямую, локально — через `uv run payments`. `payments --help` и `payments <команда> --help` показывают все параметры.
+
+| Команда | Назначение |
+|---|---|
+| `payments api [--host] [--port] [--workers] [--reload] [--migrate]` | HTTP API вместе с outbox relay; `--migrate` применяет миграции перед стартом |
+| `payments consumer` | обработчик очереди `payments.new` |
+| `payments db upgrade [REVISION]` | применить миграции, по умолчанию до `head` |
+| `payments db downgrade REVISION [-y]` | откатить миграции, например до `-1` или `base`; спрашивает подтверждение |
+| `payments db current` / `payments db history` | текущая ревизия БД / список миграций |
+| `payments db revision -m "..."` | создать миграцию с автогенерацией по моделям (разработка) |
+| `payments config show` | итоговая конфигурация (TOML + env + умолчания), секреты замаскированы |
+| `payments config check` | проверить конфигурацию; код выхода 1 и список ошибок с подсказкой нужной переменной |
+| `payments dlq list [--limit N]` | сообщения в DLQ с этапом, числом попыток и причиной; из очереди не удаляются |
+| `payments dlq requeue [--payment-id ID] [--limit N] [-y]` | вернуть сообщения из DLQ в `payments.new`; счётчик попыток начинается заново |
+
+В docker compose:
+
+```bash
+docker compose exec api payments config show
+docker compose exec api payments db current
+docker compose exec api payments dlq list
+docker compose exec api payments dlq requeue --payment-id 01a10b80-bcc0-7460-886d-3681688f9d84
+```
+
+В продакшене флаг `--migrate` не используется: миграции — отдельный шаг развёртывания (`payments db upgrade` в Job или init-контейнере), чтобы несколько реплик api не накатывали их одновременно.
 
 ## Примеры использования
 
@@ -188,7 +216,7 @@ def verify(secret: str, headers: dict[str, str], body: bytes) -> bool:
 
 - Состояние доставки webhook в БД не хранится (строго по ТЗ). Поэтому при повторной доставке сообщения с уже финализированным платежом webhook отправится ещё раз; получатель дедуплицирует по `webhook-id`.
 - Consumer обрабатывает сообщения последовательно. Для роста пропускной способности масштабируйте его репликами: `docker compose up --scale consumer=3`.
-- Чтобы переотправить сообщения из DLQ после устранения причины, включите shovel (`docker compose exec rabbitmq rabbitmq-plugins enable rabbitmq_shovel rabbitmq_shovel_management`) и в RabbitMQ Management → Queues → `payments.new.dlq` выполните *Move messages* в `payments.new`. Счётчик попыток у таких сообщений начинается заново: диагностические заголовки DLQ не совпадают с `x-stage` / `x-attempt`.
+- Сообщения из DLQ после устранения причины возвращаются командой `payments dlq requeue`. Сначала сообщение публикуется в `payments.new` с подтверждением брокера, затем удаляется из DLQ: при сбое между шагами возможен дубль (consumer идемпотентен), но не потеря. Счётчик попыток начинается заново: диагностические заголовки DLQ не совпадают с `x-stage` / `x-attempt`.
 
 ## Конфигурация
 
@@ -231,7 +259,7 @@ def verify(secret: str, headers: dict[str, str], body: bytes) -> bool:
 uv sync                               # зависимости, включая dev
 uv run ruff check . && uv run ruff format --check .
 uv run mypy src tests                 # strict
-uvx pyright src tests migrations      # то же, что видит IDE (Pylance, Zed)
+uvx pyright src tests                 # то же, что видит IDE (Pylance, Zed)
 uv run pytest tests/unit              # быстрые unit-тесты
 uv run pytest                         # всё, включая интеграционные (нужен Docker)
 ```
@@ -244,7 +272,8 @@ uv run pytest                         # всё, включая интеграц�
 - обработка событий, опубликованных, пока consumer был остановлен;
 - идемпотентность, в том числе конкурентные запросы с одним ключом;
 - аутентификация;
-- соответствие миграций моделям.
+- соответствие миграций моделям;
+- команды CLI: `db current`, `dlq list`, `dlq requeue` (в том числе фильтр по платежу и подтверждение).
 
 Локальный запуск приложения на хосте (Postgres и RabbitMQ — из compose):
 
@@ -255,9 +284,10 @@ export PAYMENTS_CONFIG=config/local.toml \
        PAYMENTS__WEBHOOK__SECRET=whsec_MRVnyabDOXIn1GLmVyP2VeXwy/Ts+AwO \
        PAYMENTS__DATABASE__PASSWORD=payments \
        PAYMENTS__RABBITMQ__PASSWORD=payments
-uv run alembic upgrade head
-uv run uvicorn payments.api.app:create_app --factory --reload   # терминал 1
-uv run python -m payments.consumer                              # терминал 2, с теми же переменными
+uv run payments config check
+uv run payments db upgrade
+uv run payments api --reload      # терминал 1
+uv run payments consumer          # терминал 2, с теми же переменными
 ```
 
 ## Структура
@@ -265,9 +295,11 @@ uv run python -m payments.consumer                              # термина
 ```
 src/payments/
 ├── api/            # FastAPI: приложение, роуты, зависимости (auth, сервисы)
+├── cli/            # Typer: команда payments (api, consumer, db, config, dlq)
 ├── consumer/       # FastStream consumer: processor (этапы и retry), эмулятор шлюза, webhook
-├── db/             # SQLAlchemy-модели, репозитории, Unit of Work
-├── messaging/      # топология RabbitMQ, политика повторов, outbox relay
+├── db/             # SQLAlchemy-модели, репозитории, Unit of Work, конфигурация Alembic
+├── messaging/      # топология RabbitMQ, политика повторов, outbox relay, работа с DLQ
+├── migrations/     # миграции Alembic (поставляются вместе с пакетом)
 ├── services.py     # создание/получение платежа, идемпотентность
 ├── schemas.py      # контракты: HTTP, сообщения брокера, webhook
 ├── domain.py       # перечисления и доменные ошибки
@@ -275,6 +307,5 @@ src/payments/
 ├── config.py       # настройки: TOML + секреты из окружения
 └── containers.py   # DI-контейнеры: сборка зависимостей и ресурсов
 config/             # TOML-конфигурация по окружениям
-migrations/         # Alembic
 tests/{unit,integration}
 ```

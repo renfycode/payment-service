@@ -27,8 +27,6 @@ RUN groupadd --system app && useradd --system --gid app --no-create-home app
 WORKDIR /app
 
 COPY --from=builder --chown=app:app /app/.venv /app/.venv
-COPY --chown=app:app alembic.ini ./
-COPY --chown=app:app migrations ./migrations
 
 # Образ не зависит от окружения: файл конфигурации монтируется при развёртывании,
 # путь к нему задаётся в PAYMENTS_CONFIG, секреты — переменными PAYMENTS__*.
@@ -39,4 +37,4 @@ USER app
 
 EXPOSE 8000
 
-CMD ["uvicorn", "payments.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["payments", "api", "--host", "0.0.0.0", "--port", "8000"]

@@ -6,12 +6,12 @@ import aio_pika
 import httpx
 import pytest
 from alembic import command
-from alembic.config import Config
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from payments.db.migrate import alembic_config
 from payments.messaging.topology import DEAD_LETTER_QUEUE_NAME
-from tests.integration.conftest import ROOT, StartConsumer
+from tests.integration.conftest import StartConsumer
 from tests.integration.helpers import (
     DECLINING_GATEWAY,
     UNAVAILABLE_GATEWAY,
@@ -243,8 +243,6 @@ async def test_idempotency_key_header_is_required(api: httpx.AsyncClient) -> Non
 
 
 def test_migrations_match_models(database_url: str) -> None:
-    config = Config(str(ROOT / "alembic.ini"))
-    config.set_main_option("script_location", str(ROOT / "migrations"))
-    config.set_main_option("sqlalchemy.url", database_url)
-
-    command.check(config)  # бросает исключение, если модели разошлись с миграциями
+    command.check(
+        alembic_config(database_url)
+    )  # бросает исключение, если модели разошлись с миграциями

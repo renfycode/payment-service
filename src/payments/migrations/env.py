@@ -7,21 +7,18 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from payments.config import MigrationSettings
 from payments.db.models import Base
-from payments.logging_config import configure_logging
 
 config = context.config
-
 
 target_metadata = Base.metadata
 
 
 def get_database_url() -> str:
     # Явно переданный URL (из тестов) важнее конфигурации сервиса.
+    # Логирование настраивает вызывающая сторона (CLI payments db …).
     if url := config.get_main_option("sqlalchemy.url"):
         return url
-    settings = MigrationSettings()  # pyright: ignore[reportCallIssue]
-    configure_logging(settings.logging.level, json=settings.logging.format == "json")
-    return settings.database.url
+    return MigrationSettings().database.url  # pyright: ignore[reportCallIssue]
 
 
 def run_migrations_offline() -> None:

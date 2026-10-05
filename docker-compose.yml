@@ -58,11 +58,9 @@ services:
     <<: *app
     build: .
     # Миграции применяются перед стартом API; consumer ждёт healthy api.
-    # exec: uvicorn заменяет shell и сам получает SIGTERM, иначе lifespan не завершится
-    # корректно (outbox relay, соединения с БД и брокером).
-    command: >
-      sh -c "alembic upgrade head &&
-             exec uvicorn payments.api.app:create_app --factory --host 0.0.0.0 --port 8000"
+    # Одна команда без shell-обёртки: процесс сам получает SIGTERM и корректно
+    # завершает lifespan (outbox relay, соединения с БД и брокером).
+    command: ["payments", "api", "--host", "0.0.0.0", "--port", "8000", "--migrate"]
     ports:
       - "8000:8000"
     depends_on:
@@ -84,7 +82,7 @@ services:
   consumer:
     <<: *app
     pull_policy: never
-    command: ["python", "-m", "payments.consumer"]
+    command: ["payments", "consumer"]
     depends_on:
       postgres:
         condition: service_healthy

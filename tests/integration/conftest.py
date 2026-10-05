@@ -11,7 +11,6 @@ import aio_pika
 import httpx
 import pytest
 from alembic import command
-from alembic.config import Config
 from asgi_lifespan import LifespanManager
 from dependency_injector import providers
 from faststream import FastStream
@@ -37,6 +36,7 @@ from payments.config import (
 from payments.consumer.app import create_app as create_consumer
 from payments.consumer.gateway import PaymentGateway
 from payments.containers import ApiContainer, ConsumerContainer
+from payments.db.migrate import alembic_config
 from payments.domain import PaymentStatus
 from payments.messaging.retry import RetryPolicy
 from payments.messaging.topology import (
@@ -98,10 +98,7 @@ def database_settings(postgres: PostgresContainer) -> DatabaseSettings:
 @pytest.fixture(scope="session")
 def database_url(database_settings: DatabaseSettings) -> str:
     url = database_settings.url
-    config = Config(str(ROOT / "alembic.ini"))
-    config.set_main_option("script_location", str(ROOT / "migrations"))
-    config.set_main_option("sqlalchemy.url", url)
-    command.upgrade(config, "head")
+    command.upgrade(alembic_config(url), "head")
     return url
 
 
@@ -135,6 +132,26 @@ def settings(
         outbox=OutboxSettings(poll_interval=0.1),
         retry=RetrySettings(base_delay=RETRY_BASE_DELAY),
     )
+
+
+@pytest.fixture
+def cli_env(settings: Settings) -> dict[str, str]:
+    """Переменные окружения, задающие ту же конфигурацию для CLI (без TOML-файла)."""
+    db, mq = settings.database, settings.rabbitmq
+    return {
+        "PAYMENTS_CONFIG": "",
+        "PAYMENTS__API__KEY": settings.api.key.get_secret_value(),
+        "PAYMENTS__WEBHOOK__SECRET": settings.webhook.secret.get_secret_value(),
+        "PAYMENTS__DATABASE__HOST": db.host,
+        "PAYMENTS__DATABASE__PORT": str(db.port),
+        "PAYMENTS__DATABASE__NAME": db.name,
+        "PAYMENTS__DATABASE__USER": db.user,
+        "PAYMENTS__DATABASE__PASSWORD": db.password.get_secret_value(),
+        "PAYMENTS__RABBITMQ__HOST": mq.host,
+        "PAYMENTS__RABBITMQ__PORT": str(mq.port),
+        "PAYMENTS__RABBITMQ__USER": mq.user,
+        "PAYMENTS__RABBITMQ__PASSWORD": mq.password.get_secret_value(),
+    }
 
 
 @pytest.fixture(autouse=True)
