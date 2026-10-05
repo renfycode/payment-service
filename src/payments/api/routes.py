@@ -1,6 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
+from dependency_injector.wiring import inject
 from fastapi import APIRouter, Depends, Header, Response, status
 
 from payments.api.dependencies import PaymentServiceDep, require_api_key
@@ -23,6 +24,7 @@ router = APIRouter(
         }
     },
 )
+@inject
 async def create_payment(
     data: PaymentCreate,
     service: PaymentServiceDep,
@@ -41,6 +43,7 @@ async def create_payment(
     "/{payment_id}",
     responses={status.HTTP_404_NOT_FOUND: {"description": "Payment not found"}},
 )
+@inject
 async def get_payment(payment_id: UUID, service: PaymentServiceDep) -> PaymentRead:
     payment = await service.get(payment_id)
     return PaymentRead.model_validate(payment)

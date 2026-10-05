@@ -2,7 +2,7 @@
 
 Микросервис асинхронной обработки платежей. Принимает запрос на оплату, проводит его через эмулятор платёжного шлюза и уведомляет клиента о результате через webhook.
 
-**Стек:** Python 3.13, FastAPI + Pydantic v2, SQLAlchemy 2.0 (async) + asyncpg, PostgreSQL 17, RabbitMQ 4 (FastStream), Alembic, loguru, Docker Compose, uv.
+**Стек:** Python 3.13, FastAPI + Pydantic v2, SQLAlchemy 2.0 (async) + asyncpg, PostgreSQL 17, RabbitMQ 4 (FastStream), Alembic, dependency-injector, loguru, Docker Compose, uv.
 
 ## Быстрый старт
 
@@ -160,6 +160,15 @@ def verify(secret: str, headers: dict[str, str], body: bytes) -> bool:
 
 **Аутентификация.** Статический ключ в `X-API-Key`, сравнение за постоянное время (`secrets.compare_digest`).
 
+**Внедрение зависимостей.** Все зависимости собираются в `src/payments/containers.py` на [dependency-injector](https://python-dependency-injector.ets-labs.org):
+- `CoreContainer` — общее для обоих процессов: типизированный `Settings`, engine БД, фабрика сессий, политика повторов;
+- `ApiContainer` — процесс api: брокер для публикации, outbox relay и его фоновая задача, `PaymentService`;
+- `ConsumerContainer` — процесс consumer: брокер с подписчиком, шлюз, HTTP-клиент и подпись webhook, processor.
+
+Подключения, HTTP-клиент и фоновая задача relay описаны как `providers.Resource`: их открывает `init_resources()` и закрывает `shutdown_resources()` в lifespan FastAPI и в хуках FastStream. dependency-injector не закрывает ресурсы в обратном порядке зависимостей, поэтому задача relay останавливается явно, до брокера и БД.
+
+В FastAPI зависимости внедряются штатно, через `@inject` и `Depends(Provide[...])`. FastStream разбирает сигнатуру обработчика сам и маркеры `Provide` не понимает, поэтому обработчик берёт processor из контейнера явно. В интеграционных тестах шлюз подменяется через `container.gateway.override(...)` детерминированными заглушками: «всегда успех», «всегда отказ», «всегда недоступен».
+
 ### Логирование
 
 Весь вывод идёт через [loguru] — и код сервиса, и библиотеки на стандартном `logging` (uvicorn, FastStream, Alembic, SQLAlchemy): их записи перехватываются и оформляются так же. К записям consumer привязан контекст: `payment_id`, этап и номер попытки, а у сообщений FastStream — `exchange`, `queue`, `message_id`. По `payment_id` удобно собрать всю историю платежа:
@@ -263,7 +272,8 @@ src/payments/
 ├── schemas.py      # контракты: HTTP, сообщения брокера, webhook
 ├── domain.py       # перечисления и доменные ошибки
 ├── logging_config.py  # loguru: цветной вывод / JSON, перехват стандартного logging
-└── config.py       # настройки: TOML + секреты из окружения
+├── config.py       # настройки: TOML + секреты из окружения
+└── containers.py   # DI-контейнеры: сборка зависимостей и ресурсов
 config/             # TOML-конфигурация по окружениям
 migrations/         # Alembic
 tests/{unit,integration}

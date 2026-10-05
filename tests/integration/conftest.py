@@ -6,7 +6,6 @@ API и consumer запускаются в процессе тестов: так 
 
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from pathlib import Path
-from typing import Any
 
 import aio_pika
 import httpx
@@ -14,6 +13,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from asgi_lifespan import LifespanManager
+from dependency_injector import providers
 from faststream import FastStream
 from pydantic import SecretStr
 from sqlalchemy import text
@@ -28,7 +28,6 @@ from payments.api.app import create_app as create_api
 from payments.config import (
     ApiSettings,
     DatabaseSettings,
-    GatewaySettings,
     OutboxSettings,
     RabbitMQSettings,
     RetrySettings,
@@ -36,13 +35,16 @@ from payments.config import (
     WebhookSettings,
 )
 from payments.consumer.app import create_app as create_consumer
+from payments.consumer.gateway import PaymentGateway
+from payments.containers import ApiContainer, ConsumerContainer
+from payments.domain import PaymentStatus
 from payments.messaging.retry import RetryPolicy
 from payments.messaging.topology import (
     DEAD_LETTER_QUEUE_NAME,
     NEW_PAYMENTS_QUEUE_NAME,
     retry_queue_name,
 )
-from tests.integration.helpers import WebhookReceiver
+from tests.integration.helpers import StaticGateway, WebhookReceiver
 
 ROOT = Path(__file__).parents[2]
 API_KEY = "test-api-key"
@@ -132,7 +134,6 @@ def settings(
         webhook=WebhookSettings(secret=SecretStr(WEBHOOK_SECRET), timeout=5),
         outbox=OutboxSettings(poll_interval=0.1),
         retry=RetrySettings(base_delay=RETRY_BASE_DELAY),
-        gateway=GatewaySettings(min_delay=0, max_delay=0, success_rate=1.0, decline_rate=0.0),
     )
 
 
@@ -160,7 +161,7 @@ async def clean_state(database_url: str, rabbitmq_url: str) -> AsyncIterator[Non
 
 @pytest.fixture
 async def api(settings: Settings) -> AsyncIterator[httpx.AsyncClient]:
-    app = create_api(settings)
+    app = create_api(ApiContainer(settings=settings))
     async with (
         LifespanManager(app),
         httpx.AsyncClient(
@@ -174,15 +175,19 @@ async def api(settings: Settings) -> AsyncIterator[httpx.AsyncClient]:
 
 type StartConsumer = Callable[..., Awaitable[FastStream]]
 
+SUCCESSFUL_GATEWAY = StaticGateway(PaymentStatus.SUCCEEDED)
+
 
 @pytest.fixture
 async def start_consumer(settings: Settings) -> AsyncIterator[StartConsumer]:
-    """Запускает consumer; gateway переопределяет поведение эмулятора шлюза."""
+    """Запускает consumer. Шлюз подменяется детерминированной заглушкой через override
+    провайдера; по умолчанию все платежи проходят успешно и без задержки."""
     started: list[FastStream] = []
 
-    async def start(*, gateway: dict[str, Any] | None = None) -> FastStream:
-        gateway_settings = settings.gateway.model_copy(update=gateway or {})
-        app = create_consumer(settings.model_copy(update={"gateway": gateway_settings}))
+    async def start(*, gateway: PaymentGateway = SUCCESSFUL_GATEWAY) -> FastStream:
+        container = ConsumerContainer(settings=settings)
+        container.gateway.override(providers.Object(gateway))
+        app = create_consumer(container)
         await app.start()
         started.append(app)
         return app

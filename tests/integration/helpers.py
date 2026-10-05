@@ -2,8 +2,12 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
+from uuid import UUID
 
 import httpx
+
+from payments.consumer.gateway import ChargeResult, GatewayUnavailableError
+from payments.domain import PaymentStatus
 
 
 class WebhookReceiver:
@@ -37,3 +41,19 @@ async def eventually[T](
         if time.monotonic() > deadline:
             raise AssertionError(f"Condition not met within {within}s, last value: {value!r}")
         await asyncio.sleep(interval)
+
+
+class StaticGateway:
+    """Шлюз-заглушка: всегда возвращает один и тот же результат или всегда недоступен."""
+
+    def __init__(self, outcome: ChargeResult | None) -> None:
+        self._outcome: ChargeResult | None = outcome
+
+    async def charge(self, payment_id: UUID) -> ChargeResult:
+        if self._outcome is None:
+            raise GatewayUnavailableError(f"Gateway is down ({payment_id})")
+        return self._outcome
+
+
+DECLINING_GATEWAY = StaticGateway(PaymentStatus.FAILED)
+UNAVAILABLE_GATEWAY = StaticGateway(None)

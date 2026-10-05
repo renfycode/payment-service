@@ -12,7 +12,12 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from payments.messaging.topology import DEAD_LETTER_QUEUE_NAME
 from tests.integration.conftest import ROOT, StartConsumer
-from tests.integration.helpers import WebhookReceiver, eventually
+from tests.integration.helpers import (
+    DECLINING_GATEWAY,
+    UNAVAILABLE_GATEWAY,
+    WebhookReceiver,
+    eventually,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -89,7 +94,7 @@ async def test_successful_payment_is_processed_and_webhook_delivered(
 async def test_declined_payment_is_failed_and_notified(
     api: httpx.AsyncClient, start_consumer: StartConsumer, receiver: WebhookReceiver
 ) -> None:
-    await start_consumer(gateway={"success_rate": 0.0, "decline_rate": 1.0})
+    await start_consumer(gateway=DECLINING_GATEWAY)
     payment_id = await create_payment(api, payment_body(receiver.url("declined")))
 
     (delivery,) = await eventually(lambda: receiver.deliveries("declined"), lambda d: len(d) == 1)
@@ -146,7 +151,7 @@ async def test_gateway_outage_leaves_payment_pending_and_goes_to_dlq(
     receiver: WebhookReceiver,
     rabbitmq_url: str,
 ) -> None:
-    await start_consumer(gateway={"success_rate": 0.0, "decline_rate": 0.0})
+    await start_consumer(gateway=UNAVAILABLE_GATEWAY)
     payment_id = await create_payment(api, payment_body(receiver.url("outage")))
 
     messages = await eventually(lambda: dead_letters(rabbitmq_url), lambda m: len(m) == 1)

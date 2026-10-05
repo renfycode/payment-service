@@ -2,25 +2,13 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
-import httpx
 from faststream import AckPolicy, FastStream
-from faststream.rabbit import RabbitBroker
 from faststream.rabbit.annotations import RabbitMessage
 
 from payments.config import Settings
-from payments.consumer.gateway import EmulatedPaymentGateway
-from payments.consumer.processor import (
-    Ack,
-    DeadLetter,
-    PaymentProcessor,
-    Retry,
-    SqlPaymentStore,
-    Stage,
-)
-from payments.consumer.webhooks import WebhookNotifier, WebhookSigner
-from payments.db.session import create_engine, create_session_factory
+from payments.consumer.processor import Ack, DeadLetter, Retry, Stage
+from payments.containers import ConsumerContainer, init_resources, shutdown_resources
 from payments.logging_config import configure_logging
-from payments.messaging.retry import RetryPolicy
 from payments.messaging.topology import (
     ATTEMPT_HEADER,
     DEAD_LETTER_ATTEMPTS_HEADER,
@@ -48,28 +36,14 @@ def parse_retry_headers(headers: Mapping[str, Any]) -> tuple[Stage | None, int]:
     return stage, attempt
 
 
-def create_app(settings: Settings | None = None) -> FastStream:
-    # Обязательные секреты приходят из окружения — pyright этого не видит.
-    settings = settings or Settings()  # pyright: ignore[reportCallIssue]
+def create_app(container: ConsumerContainer | None = None) -> FastStream:
+    if container is None:
+        # Обязательные секреты приходят из окружения — pyright этого не видит.
+        container = ConsumerContainer(settings=Settings())  # pyright: ignore[reportCallIssue]
+    settings = container.settings()
     configure_logging(settings.logging.level, json=settings.logging.format == "json")
 
-    retry_policy = RetryPolicy(settings.retry.max_attempts, settings.retry.base_delay)
-    # Логгеры стандартного logging без своих обработчиков: записи FastStream
-    # всплывают в корневой логгер и оформляются loguru (см. logging_config).
-    broker = RabbitBroker(settings.rabbitmq.url, logger=logging.getLogger("faststream.rabbit"))
-    engine = create_engine(settings.database.url)
-    http_client = httpx.AsyncClient(timeout=settings.webhook.timeout, follow_redirects=False)
-    processor = PaymentProcessor(
-        SqlPaymentStore(create_session_factory(engine)),
-        EmulatedPaymentGateway(
-            min_delay=settings.gateway.min_delay,
-            max_delay=settings.gateway.max_delay,
-            success_rate=settings.gateway.success_rate,
-            decline_rate=settings.gateway.decline_rate,
-        ),
-        WebhookNotifier(http_client, WebhookSigner(settings.webhook.secret.get_secret_value())),
-        retry_policy,
-    )
+    broker = container.broker()
 
     # Если обработчик упал необработанным исключением (например, тело не прошло валидацию),
     # сообщение отклоняется и через DLX очереди попадает в DLQ, а не крутится бесконечно.
@@ -78,6 +52,10 @@ def create_app(settings: Settings | None = None) -> FastStream:
     )
     async def handle_payment_created(event: PaymentCreatedEvent, message: RabbitMessage) -> None:
         stage, attempt = parse_retry_headers(message.headers)
+        # FastStream разбирает сигнатуру обработчика сам (fast_depends), маркеры Provide
+        # из dependency-injector он не понимает — берём зависимость из контейнера явно.
+        # Processor зависит от async-ресурсов, поэтому провайдер возвращает awaitable.
+        processor = await container.processor.async_()
         outcome = await processor.process(event.payment_id, stage, attempt)
         body = event.model_dump(mode="json")
 
@@ -111,12 +89,14 @@ def create_app(settings: Settings | None = None) -> FastStream:
         await message.ack()
 
     async def on_startup() -> None:
+        # До старта брокера: подписчик начнёт получать сообщения уже с готовыми ресурсами.
+        await init_resources(container)
         await broker.connect()
-        await declare_topology(broker, retry_policy.delays_ms)
+        await declare_topology(broker, container.core.retry_policy().delays_ms)
 
     async def after_shutdown() -> None:
-        await http_client.aclose()
-        await engine.dispose()
+        # После остановки брокера: обработчики завершены, ресурсы можно закрывать.
+        await shutdown_resources(container)
 
     return FastStream(
         broker,

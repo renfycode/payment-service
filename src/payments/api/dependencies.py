@@ -1,22 +1,23 @@
 import secrets
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, Request, Security, status
+from dependency_injector.wiring import Provide, inject
+from fastapi import Depends, HTTPException, Security, status
 from fastapi.security import APIKeyHeader
 
 from payments.config import Settings
+from payments.containers import ApiContainer
 from payments.services import PaymentService
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
-
-def get_settings(request: Request) -> Settings:
-    settings: Settings = request.app.state.settings
-    return settings
+SettingsDep = Annotated[Settings, Depends(Provide[ApiContainer.settings])]
+PaymentServiceDep = Annotated[PaymentService, Depends(Provide[ApiContainer.payment_service])]
 
 
+@inject
 async def require_api_key(
-    settings: Annotated[Settings, Depends(get_settings)],
+    settings: SettingsDep,
     api_key: Annotated[str | None, Security(api_key_header)],
 ) -> None:
     expected = settings.api.key.get_secret_value()
@@ -26,10 +27,3 @@ async def require_api_key(
             detail="Invalid or missing API key",
             headers={"WWW-Authenticate": "ApiKey"},
         )
-
-
-def get_payment_service(request: Request) -> PaymentService:
-    return PaymentService(request.app.state.session_factory)
-
-
-PaymentServiceDep = Annotated[PaymentService, Depends(get_payment_service)]
