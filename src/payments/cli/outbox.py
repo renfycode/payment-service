@@ -14,11 +14,14 @@ app = new_typer("Outbox table maintenance.")
 @app.command()
 def cleanup(
     older_than_days: Annotated[
-        int, typer.Option(min=1, help="Delete published events older than this many days.")
+        int, typer.Option(min=1, help="Delete published events created more than N days ago.")
     ] = 180,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Do not ask for confirmation.")] = False,
 ) -> None:
-    """Delete published outbox events older than N days. Unpublished events are never deleted."""
+    """Delete published outbox events created more than N days ago.
+
+    Unpublished events are never deleted.
+    """
     settings = load_maintenance_settings()
     setup_logging(settings)
     cutoff = outbox_cleanup.cutoff_for(timedelta(days=older_than_days))
@@ -30,7 +33,7 @@ async def _cleanup(database_url: str, cutoff: datetime, *, ask: bool) -> None:
     session_factory = create_session_factory(engine)
     try:
         total = await outbox_cleanup.count_published_before(session_factory, cutoff)
-        when = f"published before {cutoff:%Y-%m-%d %H:%M} UTC"
+        when = f"created before {cutoff:%Y-%m-%d %H:%M} UTC"
         if total == 0:
             console.print(f"Nothing to delete: no outbox events {when}")
             return

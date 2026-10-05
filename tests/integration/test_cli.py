@@ -66,7 +66,7 @@ def test_db_current_shows_head_revision(cli_env: dict[str, str]) -> None:
     result = runner.invoke(app, ["db", "current"], env=cli_env)
 
     assert result.exit_code == 0, result.output
-    assert "0002 (head)" in result.output
+    assert "0001 (head)" in result.output
 
 
 def test_dlq_list_shows_reasons_without_consuming(

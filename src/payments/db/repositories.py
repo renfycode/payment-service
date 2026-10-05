@@ -66,17 +66,23 @@ class OutboxRepository:
         )
         return (await self._session.scalars(stmt)).all()
 
-    async def count_published_before(self, cutoff: datetime) -> int:
-        stmt = select(func.count()).where(OutboxMessage.published_at < cutoff)
+    async def count_published_before(self, boundary: UUID) -> int:
+        stmt = select(func.count()).where(
+            OutboxMessage.id < boundary, OutboxMessage.published_at.is_not(None)
+        )
         return (await self._session.execute(stmt)).scalar_one()
 
-    async def delete_published_before(self, cutoff: datetime, limit: int) -> int:
-        """Удаляет до limit опубликованных событий старше cutoff. Неопубликованные
-        не трогаются никогда: это события, ещё не доставленные в брокер."""
+    async def delete_published_before(self, boundary: UUID, limit: int) -> int:
+        """Удаляет до limit опубликованных событий с id меньше boundary.
+
+        id — UUIDv7, его старшие биты — время создания, поэтому «создано раньше X»
+        это диапазон по первичному ключу: отдельный индекс не нужен.
+        Неопубликованные события не удаляются никогда: они ещё не доставлены в брокер.
+        """
         batch = (
             select(OutboxMessage.id)
-            .where(OutboxMessage.published_at < cutoff)
-            .order_by(OutboxMessage.published_at)
+            .where(OutboxMessage.id < boundary, OutboxMessage.published_at.is_not(None))
+            .order_by(OutboxMessage.id)
             .limit(limit)
         )
         stmt = delete(OutboxMessage).where(OutboxMessage.id.in_(batch))

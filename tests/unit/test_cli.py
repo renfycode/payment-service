@@ -85,4 +85,4 @@ def test_next_revision_id_is_sequential() -> None:
     from payments.cli.db import next_revision_id  # noqa: PLC0415
     from payments.db.migrate import alembic_config  # noqa: PLC0415
 
-    assert next_revision_id(alembic_config()) == "0003"
+    assert next_revision_id(alembic_config()) == "0002"

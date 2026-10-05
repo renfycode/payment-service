@@ -1,8 +1,9 @@
 """Надёжность outbox, очистка outbox и healthcheck consumer."""
 
+import secrets
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -17,6 +18,7 @@ from payments.consumer.app import HEALTH_PATH
 from payments.containers import PUBLISHING_CHANNEL
 from payments.db.session import create_session_factory
 from payments.messaging import outbox_cleanup, topology
+from payments.messaging.outbox_cleanup import uuid7_lower_bound
 from payments.messaging.outbox_relay import OutboxRelay
 from payments.messaging.topology import PAYMENTS_EXCHANGE, declare_topology
 from tests.integration.conftest import StartConsumer
@@ -36,7 +38,8 @@ async def insert_outbox(
     engine: AsyncEngine, *, created_days_ago: int, published_days_ago: int | None
 ) -> str:
     now = datetime.now(UTC)
-    message_id = str(uuid4())
+    created = now - timedelta(days=created_days_ago)
+    message_id = str(uuid7_at(created))
     async with engine.begin() as conn:
         await conn.execute(
             text(
@@ -45,13 +48,19 @@ async def insert_outbox(
             ),
             {
                 "id": message_id,
-                "created": now - timedelta(days=created_days_ago),
+                "created": created,
                 "published": None
                 if published_days_ago is None
                 else now - timedelta(days=published_days_ago),
             },
         )
     return message_id
+
+
+def uuid7_at(moment: datetime) -> UUID:
+    """UUIDv7 со временем moment и случайными младшими битами — как у сервиса."""
+    random_bits = (secrets.randbits(12) << 64) | secrets.randbits(62)
+    return UUID(int=uuid7_lower_bound(moment).int | random_bits)
 
 
 async def outbox_ids(engine: AsyncEngine) -> set[str]:
