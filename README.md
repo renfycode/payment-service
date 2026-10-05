@@ -7,15 +7,16 @@
 ## Быстрый старт
 
 ```bash
-cp .env.example .env          # замените API_KEY и WEBHOOK_SECRET
 docker compose up -d --build --wait
 ```
+
+Конфигурация берётся из `config/docker.toml`. Секреты для локального стенда заданы в `docker-compose.yml` значениями по умолчанию: API-ключ `dev-api-key`. Переопределить их можно переменными окружения при запуске: `PAYMENTS_API_KEY`, `PAYMENTS_WEBHOOK_SECRET`, `POSTGRES_PASSWORD`, `RABBITMQ_PASSWORD`.
 
 | Сервис | Адрес |
 |---|---|
 | API | http://localhost:8000 |
 | Swagger UI | http://localhost:8000/docs |
-| RabbitMQ Management | http://localhost:15672 (логин/пароль из `.env`, по умолчанию `payments` / `payments`) |
+| RabbitMQ Management | http://localhost:15672 (`payments` / `payments`) |
 
 Миграции применяются автоматически при старте контейнера `api`.
 
@@ -27,7 +28,7 @@ docker compose up -d --build --wait
 
 ```bash
 curl -i -X POST http://localhost:8000/api/v1/payments \
-  -H "X-API-Key: change-me-api-key" \
+  -H "X-API-Key: dev-api-key" \
   -H "Idempotency-Key: order-42" \
   -H "Content-Type: application/json" \
   -d '{
@@ -49,7 +50,7 @@ HTTP/1.1 202 Accepted
 
 ```bash
 curl http://localhost:8000/api/v1/payments/01a10b80-bcc0-7460-886d-3681688f9d84 \
-  -H "X-API-Key: change-me-api-key"
+  -H "X-API-Key: dev-api-key"
 ```
 
 ```json
@@ -168,7 +169,7 @@ def verify(secret: str, headers: dict[str, str], body: bytes) -> bool:
 2026-10-05 10:07:28.523 │ SUCCESS  │ payments.consumer.processor:_process:120 │ Payment processed, webhook delivered payment_id=01a10b88-…
 ```
 
-`LOG_JSON=true` включает компактный JSON для сборщиков логов (Loki, ELK): `timestamp`, `level`, `logger`, `message`, контекст и `exception` с трейсбеком. Значения переменных в трейсбеках не выводятся (`diagnose=False`), чтобы в логи не утекали секреты и данные платежей. Запросы healthcheck в access-лог не пишутся.
+`format = "json"` в секции `[logging]` включает компактный JSON для сборщиков логов (Loki, ELK): `timestamp`, `level`, `logger`, `message`, контекст и `exception` с трейсбеком. Значения переменных в трейсбеках не выводятся (`diagnose=False`), чтобы в логи не утекали секреты и данные платежей. Запросы healthcheck в access-лог не пишутся.
 
 [loguru]: https://github.com/Delgan/loguru
 
@@ -180,22 +181,38 @@ def verify(secret: str, headers: dict[str, str], body: bytes) -> bool:
 
 ## Конфигурация
 
-Переменные окружения (полный список — `src/payments/config.py`):
+Несекретные параметры хранятся в TOML, по одному файлу на окружение. Нужный файл выбирается переменной `PAYMENTS_CONFIG`:
 
-| Переменная | По умолчанию | Описание |
-|---|---|---|
-| `API_KEY` | — (обязательна) | Ключ для `X-API-Key` |
-| `WEBHOOK_SECRET` | — (обязательна) | Секрет подписи, `whsec_<base64>` |
-| `DATABASE_URL` | `postgresql+asyncpg://payments:payments@localhost:5432/payments` | |
-| `RABBITMQ_URL` | `amqp://guest:guest@localhost:5672/` | |
-| `MAX_ATTEMPTS` | `3` | Попыток на этап, включая первую |
-| `RETRY_BASE_DELAY` | `2.0` | Секунды; задержки `base · 2ⁿ⁻¹` |
-| `GATEWAY_MIN_DELAY` / `GATEWAY_MAX_DELAY` | `2.0` / `5.0` | Задержка эмулятора, секунды |
-| `GATEWAY_SUCCESS_RATE` / `GATEWAY_DECLINE_RATE` | `0.90` / `0.07` | Остаток — технические сбои |
-| `WEBHOOK_TIMEOUT` | `10.0` | Таймаут запроса webhook, секунды |
-| `OUTBOX_POLL_INTERVAL` / `OUTBOX_BATCH_SIZE` | `1.0` / `100` | |
-| `LOG_LEVEL` | `INFO` | |
-| `LOG_JSON` | `false` | JSON-логи (одна запись на строку) вместо цветного вывода |
+| Файл | Назначение |
+|---|---|
+| `config/local.toml` | приложение на хосте, Postgres и RabbitMQ из `docker compose` |
+| `config/docker.toml` | всё в `docker compose` (монтируется в контейнеры) |
+| `config/production.example.toml` | шаблон для продакшена |
+
+Образ от окружения не зависит: файл монтируется при развёртывании (в Kubernetes — ConfigMap), путь к нему передаётся в `PAYMENTS_CONFIG`.
+
+Порядок приоритета: переменные окружения → TOML → значения по умолчанию из `src/payments/config.py`. В файле достаточно указать то, что отличается от умолчаний. Любой параметр можно точечно переопределить переменной `PAYMENTS__<СЕКЦИЯ>__<КЛЮЧ>`, например `PAYMENTS__RETRY__MAX_ATTEMPTS=5`.
+
+**Секреты только в окружении** (Vault, k8s Secrets, CI). Если секрет окажется в TOML, сервис не запустится — так файлы конфигурации можно спокойно хранить в git и ревьюить:
+
+| Переменная | Описание |
+|---|---|
+| `PAYMENTS__API__KEY` | Ключ для заголовка `X-API-Key` |
+| `PAYMENTS__WEBHOOK__SECRET` | Секрет подписи webhook, `whsec_<base64>` |
+| `PAYMENTS__DATABASE__PASSWORD` | Пароль PostgreSQL |
+| `PAYMENTS__RABBITMQ__PASSWORD` | Пароль RabbitMQ |
+
+Неизвестный ключ в TOML (например, опечатка `max_atempts`) тоже останавливает старт, а не игнорируется молча. Миграциям нужны только `[database]` и пароль БД, секреты API и webhook для них не требуются.
+
+| Секция | Ключи (по умолчанию) |
+|---|---|
+| `[database]` | `host` (`localhost`), `port` (`5432`), `name` (`payments`), `user` (`payments`) |
+| `[rabbitmq]` | `host` (`localhost`), `port` (`5672`), `vhost` (`/`), `user` (`guest`) |
+| `[outbox]` | `poll_interval` (`1.0` с), `batch_size` (`100`) |
+| `[retry]` | `max_attempts` (`3`, включая первую), `base_delay` (`2.0` с; задержки `base · 2ⁿ⁻¹`) |
+| `[gateway]` | `min_delay` / `max_delay` (`2.0` / `5.0` с), `success_rate` / `decline_rate` (`0.90` / `0.07`, остаток — технические сбои) |
+| `[webhook]` | `timeout` (`10.0` с) |
+| `[logging]` | `level` (`INFO`), `format` (`pretty` или `json`) |
 
 ## Разработка
 
@@ -217,10 +234,15 @@ uv run pytest                         # всё, включая интеграц�
 - аутентификация;
 - соответствие миграций моделям.
 
-Локальный запуск без Docker для приложения (Postgres и RabbitMQ должны быть доступны):
+Локальный запуск приложения на хосте (Postgres и RabbitMQ — из compose):
 
 ```bash
-export API_KEY=dev WEBHOOK_SECRET=whsec_MRVnyabDOXIn1GLmVyP2VeXwy/Ts+AwO DATABASE_URL=...
+docker compose up -d --wait postgres rabbitmq
+export PAYMENTS_CONFIG=config/local.toml \
+       PAYMENTS__API__KEY=dev-api-key \
+       PAYMENTS__WEBHOOK__SECRET=whsec_MRVnyabDOXIn1GLmVyP2VeXwy/Ts+AwO \
+       PAYMENTS__DATABASE__PASSWORD=payments \
+       PAYMENTS__RABBITMQ__PASSWORD=payments
 uv run alembic upgrade head
 uv run uvicorn payments.api.app:create_app --factory --reload
 uv run python -m payments.consumer
@@ -237,7 +259,8 @@ src/payments/
 ├── services.py     # создание/получение платежа, идемпотентность
 ├── schemas.py      # контракты: HTTP, сообщения брокера, webhook
 ├── domain.py       # перечисления и доменные ошибки
-└── config.py       # настройки из окружения
+└── config.py       # настройки: TOML + секреты из окружения
+config/             # TOML-конфигурация по окружениям
 migrations/         # Alembic
 tests/{unit,integration}
 ```

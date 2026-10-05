@@ -51,23 +51,23 @@ def parse_retry_headers(headers: Mapping[str, Any]) -> tuple[Stage | None, int]:
 def create_app(settings: Settings | None = None) -> FastStream:
     # Обязательные секреты приходят из окружения — pyright этого не видит.
     settings = settings or Settings()  # pyright: ignore[reportCallIssue]
-    configure_logging(settings.log_level, json=settings.log_json)
+    configure_logging(settings.logging.level, json=settings.logging.format == "json")
 
-    retry_policy = RetryPolicy(settings.max_attempts, settings.retry_base_delay)
+    retry_policy = RetryPolicy(settings.retry.max_attempts, settings.retry.base_delay)
     # Логгеры стандартного logging без своих обработчиков: записи FastStream
     # всплывают в корневой логгер и оформляются loguru (см. logging_config).
-    broker = RabbitBroker(settings.rabbitmq_url, logger=logging.getLogger("faststream.rabbit"))
-    engine = create_engine(settings.database_url)
-    http_client = httpx.AsyncClient(timeout=settings.webhook_timeout, follow_redirects=False)
+    broker = RabbitBroker(settings.rabbitmq.url, logger=logging.getLogger("faststream.rabbit"))
+    engine = create_engine(settings.database.url)
+    http_client = httpx.AsyncClient(timeout=settings.webhook.timeout, follow_redirects=False)
     processor = PaymentProcessor(
         SqlPaymentStore(create_session_factory(engine)),
         EmulatedPaymentGateway(
-            min_delay=settings.gateway_min_delay,
-            max_delay=settings.gateway_max_delay,
-            success_rate=settings.gateway_success_rate,
-            decline_rate=settings.gateway_decline_rate,
+            min_delay=settings.gateway.min_delay,
+            max_delay=settings.gateway.max_delay,
+            success_rate=settings.gateway.success_rate,
+            decline_rate=settings.gateway.decline_rate,
         ),
-        WebhookNotifier(http_client, WebhookSigner(settings.webhook_secret.get_secret_value())),
+        WebhookNotifier(http_client, WebhookSigner(settings.webhook.secret.get_secret_value())),
         retry_policy,
     )
 

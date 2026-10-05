@@ -1,27 +1,27 @@
 import asyncio
-import os
 
 from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from payments.config import MigrationSettings
 from payments.db.models import Base
 from payments.logging_config import configure_logging
 
 config = context.config
 
-configure_logging(
-    os.environ.get("LOG_LEVEL", "INFO"),
-    json=os.environ.get("LOG_JSON", "").lower() in {"1", "true", "yes"},
-)
 
 target_metadata = Base.metadata
 
 
 def get_database_url() -> str:
-    # Явно переданный URL (например, из тестов) важнее переменной окружения.
-    return config.get_main_option("sqlalchemy.url") or os.environ["DATABASE_URL"]
+    # Явно переданный URL (из тестов) важнее конфигурации сервиса.
+    if url := config.get_main_option("sqlalchemy.url"):
+        return url
+    settings = MigrationSettings()  # pyright: ignore[reportCallIssue]
+    configure_logging(settings.logging.level, json=settings.logging.format == "json")
+    return settings.database.url
 
 
 def run_migrations_offline() -> None:

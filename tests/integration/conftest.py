@@ -25,7 +25,16 @@ from testcontainers.core.image import DockerImage
 from testcontainers.core.wait_strategies import HttpWaitStrategy
 
 from payments.api.app import create_app as create_api
-from payments.config import Settings
+from payments.config import (
+    ApiSettings,
+    DatabaseSettings,
+    GatewaySettings,
+    OutboxSettings,
+    RabbitMQSettings,
+    RetrySettings,
+    Settings,
+    WebhookSettings,
+)
 from payments.consumer.app import create_app as create_consumer
 from payments.messaging.retry import RetryPolicy
 from payments.messaging.topology import (
@@ -74,8 +83,19 @@ def webhook_receiver() -> Iterator[str]:
 
 
 @pytest.fixture(scope="session")
-def database_url(postgres: PostgresContainer) -> str:
-    url: str = postgres.get_connection_url()
+def database_settings(postgres: PostgresContainer) -> DatabaseSettings:
+    return DatabaseSettings(
+        host=postgres.get_container_host_ip(),
+        port=int(postgres.get_exposed_port(postgres.port)),
+        name=postgres.dbname,
+        user=postgres.username,
+        password=SecretStr(postgres.password),
+    )
+
+
+@pytest.fixture(scope="session")
+def database_url(database_settings: DatabaseSettings) -> str:
+    url = database_settings.url
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(ROOT / "migrations"))
     config.set_main_option("sqlalchemy.url", url)
@@ -84,26 +104,35 @@ def database_url(postgres: PostgresContainer) -> str:
 
 
 @pytest.fixture(scope="session")
-def rabbitmq_url(rabbitmq: RabbitMqContainer) -> str:
-    host = rabbitmq.get_container_host_ip()
-    port = rabbitmq.get_exposed_port(rabbitmq.port)
-    return f"amqp://{rabbitmq.username}:{rabbitmq.password}@{host}:{port}/"
+def rabbitmq_settings(rabbitmq: RabbitMqContainer) -> RabbitMQSettings:
+    return RabbitMQSettings(
+        host=rabbitmq.get_container_host_ip(),
+        port=int(rabbitmq.get_exposed_port(rabbitmq.port)),
+        vhost=rabbitmq.vhost,
+        user=rabbitmq.username,
+        password=SecretStr(rabbitmq.password),
+    )
+
+
+@pytest.fixture(scope="session")
+def rabbitmq_url(rabbitmq_settings: RabbitMQSettings) -> str:
+    return rabbitmq_settings.url
 
 
 @pytest.fixture
-def settings(database_url: str, rabbitmq_url: str) -> Settings:
+def settings(
+    database_url: str,  # гарантирует применённые миграции
+    database_settings: DatabaseSettings,
+    rabbitmq_settings: RabbitMQSettings,
+) -> Settings:
     return Settings(
-        database_url=database_url,
-        rabbitmq_url=rabbitmq_url,
-        api_key=SecretStr(API_KEY),
-        webhook_secret=SecretStr(WEBHOOK_SECRET),
-        outbox_poll_interval=0.1,
-        retry_base_delay=RETRY_BASE_DELAY,
-        gateway_min_delay=0,
-        gateway_max_delay=0,
-        gateway_success_rate=1.0,
-        gateway_decline_rate=0.0,
-        webhook_timeout=5,
+        api=ApiSettings(key=SecretStr(API_KEY)),
+        database=database_settings,
+        rabbitmq=rabbitmq_settings,
+        webhook=WebhookSettings(secret=SecretStr(WEBHOOK_SECRET), timeout=5),
+        outbox=OutboxSettings(poll_interval=0.1),
+        retry=RetrySettings(base_delay=RETRY_BASE_DELAY),
+        gateway=GatewaySettings(min_delay=0, max_delay=0, success_rate=1.0, decline_rate=0.0),
     )
 
 
@@ -148,11 +177,12 @@ type StartConsumer = Callable[..., Awaitable[FastStream]]
 
 @pytest.fixture
 async def start_consumer(settings: Settings) -> AsyncIterator[StartConsumer]:
-    """Запускает consumer; именованные аргументы переопределяют настройки."""
+    """Запускает consumer; gateway переопределяет поведение эмулятора шлюза."""
     started: list[FastStream] = []
 
-    async def start(**overrides: Any) -> FastStream:
-        app = create_consumer(settings.model_copy(update=overrides))
+    async def start(*, gateway: dict[str, Any] | None = None) -> FastStream:
+        gateway_settings = settings.gateway.model_copy(update=gateway or {})
+        app = create_consumer(settings.model_copy(update={"gateway": gateway_settings}))
         await app.start()
         started.append(app)
         return app

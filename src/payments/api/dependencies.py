@@ -19,7 +19,7 @@ async def require_api_key(
     settings: Annotated[Settings, Depends(get_settings)],
     api_key: Annotated[str | None, Security(api_key_header)],
 ) -> None:
-    expected = settings.api_key.get_secret_value()
+    expected = settings.api.key.get_secret_value()
     if api_key is None or not secrets.compare_digest(api_key.encode(), expected.encode()):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

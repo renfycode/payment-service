@@ -1,0 +1,42 @@
+# Шаблон для продакшена. Скопируйте, подставьте адреса своей инфраструктуры
+# и смонтируйте в контейнер (например, ConfigMap), указав путь в PAYMENTS_CONFIG.
+#
+# Секреты приходят из окружения (Vault, k8s Secrets, CI):
+#   PAYMENTS__API__KEY, PAYMENTS__WEBHOOK__SECRET,
+#   PAYMENTS__DATABASE__PASSWORD, PAYMENTS__RABBITMQ__PASSWORD
+#
+# Любой параметр можно точечно переопределить переменной окружения:
+#   PAYMENTS__<СЕКЦИЯ>__<КЛЮЧ>, например PAYMENTS__RETRY__MAX_ATTEMPTS=5
+
+[database]
+host = "postgres.internal"
+port = 5432
+name = "payments"
+user = "payments_app"
+
+[rabbitmq]
+host = "rabbitmq.internal"
+port = 5672
+vhost = "payments"
+user = "payments_app"
+
+[outbox]
+poll_interval = 0.5
+batch_size = 500
+
+[retry]
+max_attempts = 3
+base_delay = 2.0
+
+[gateway]
+min_delay = 2.0
+max_delay = 5.0
+success_rate = 0.90
+decline_rate = 0.07
+
+[webhook]
+timeout = 10.0
+
+[logging]
+level = "INFO"
+format = "json"

@@ -30,6 +30,8 @@ COPY --from=builder --chown=app:app /app/.venv /app/.venv
 COPY --chown=app:app alembic.ini ./
 COPY --chown=app:app migrations ./migrations
 
+# Образ не зависит от окружения: файл конфигурации монтируется при развёртывании,
+# путь к нему задаётся в PAYMENTS_CONFIG, секреты — переменными PAYMENTS__*.
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1
 

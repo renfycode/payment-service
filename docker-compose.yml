@@ -5,22 +5,30 @@ x-app: &app
   restart: unless-stopped
   # С TTY loguru раскрашивает вывод, и docker compose logs остаются цветными.
   tty: true
+  # Несекретная конфигурация — config/docker.toml. Каталог смонтирован, чтобы правки
+  # применялись перезапуском контейнера, без пересборки образа.
+  volumes:
+    - ./config:/app/config:ro
   environment:
-    API_KEY: ${API_KEY:?set API_KEY in .env}
-    WEBHOOK_SECRET: ${WEBHOOK_SECRET:?set WEBHOOK_SECRET in .env}
-    DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-payments}:${POSTGRES_PASSWORD:-payments}@postgres:5432/${POSTGRES_DB:-payments}
-    RABBITMQ_URL: amqp://${RABBITMQ_USER:-payments}:${RABBITMQ_PASSWORD:-payments}@rabbitmq:5672/
-    LOG_LEVEL: ${LOG_LEVEL:-INFO}
-    LOG_JSON: ${LOG_JSON:-false}
+    PAYMENTS_CONFIG: /app/config/docker.toml
+    # Секреты. Значения по умолчанию годятся только для локального стенда;
+    # переопределяются переменными окружения при запуске compose.
+    PAYMENTS__API__KEY: ${PAYMENTS_API_KEY:-dev-api-key}
+    PAYMENTS__WEBHOOK__SECRET: ${PAYMENTS_WEBHOOK_SECRET:-whsec_MRVnyabDOXIn1GLmVyP2VeXwy/Ts+AwO}
+    PAYMENTS__DATABASE__PASSWORD: ${POSTGRES_PASSWORD:-payments}
+    PAYMENTS__RABBITMQ__PASSWORD: ${RABBITMQ_PASSWORD:-payments}
 
 services:
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-payments}
+      # Имена пользователя и базы совпадают с config/docker.toml.
+      POSTGRES_USER: payments
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-payments}
-      POSTGRES_DB: ${POSTGRES_DB:-payments}
+      POSTGRES_DB: payments
+    ports:
+      - "5432:5432" # для локального запуска приложения с config/local.toml
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -33,9 +41,10 @@ services:
     image: rabbitmq:4.1-management-alpine
     restart: unless-stopped
     environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-payments}
+      RABBITMQ_DEFAULT_USER: payments
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-payments}
     ports:
+      - "5672:5672" # для локального запуска приложения с config/local.toml
       - "15672:15672" # management UI
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq

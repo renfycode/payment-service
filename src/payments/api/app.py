@@ -19,22 +19,22 @@ from payments.messaging.topology import declare_topology
 def create_app(settings: Settings | None = None) -> FastAPI:
     # Обязательные секреты приходят из окружения — pyright этого не видит.
     settings = settings or Settings()  # pyright: ignore[reportCallIssue]
-    configure_logging(settings.log_level, json=settings.log_json)
+    configure_logging(settings.logging.level, json=settings.logging.format == "json")
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        engine = create_engine(settings.database_url)
+        engine = create_engine(settings.database.url)
         session_factory = create_session_factory(engine)
-        broker = RabbitBroker(settings.rabbitmq_url, logger=None)
+        broker = RabbitBroker(settings.rabbitmq.url, logger=None)
         await broker.connect()
-        retry_policy = RetryPolicy(settings.max_attempts, settings.retry_base_delay)
+        retry_policy = RetryPolicy(settings.retry.max_attempts, settings.retry.base_delay)
         await declare_topology(broker, retry_policy.delays_ms)
 
         relay = OutboxRelay(
             session_factory,
             broker,
-            batch_size=settings.outbox_batch_size,
-            poll_interval=settings.outbox_poll_interval,
+            batch_size=settings.outbox.batch_size,
+            poll_interval=settings.outbox.poll_interval,
         )
         relay_task = asyncio.create_task(relay.run(), name="outbox-relay")
 
