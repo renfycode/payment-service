@@ -21,7 +21,7 @@ class DomainError(Exception):
 class PaymentNotFoundError(DomainError):
     def __init__(self, payment_id: UUID) -> None:
         super().__init__(f"Payment {payment_id} not found")
-        self.payment_id = payment_id
+        self.payment_id: UUID = payment_id
 
 
 class IdempotencyConflictError(DomainError):
@@ -29,4 +29,4 @@ class IdempotencyConflictError(DomainError):
         super().__init__(
             f"Idempotency-Key {idempotency_key!r} was already used with a different request body"
         )
-        self.idempotency_key = idempotency_key
+        self.idempotency_key: str = idempotency_key

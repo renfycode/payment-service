@@ -20,7 +20,7 @@ class UnitOfWork:
     outbox: OutboxRepository
 
     def __init__(self, session_factory: SessionFactory) -> None:
-        self._session_factory = session_factory
+        self._session_factory: SessionFactory = session_factory
 
     async def __aenter__(self) -> Self:
         self.session = self._session_factory()
