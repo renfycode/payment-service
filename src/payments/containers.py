@@ -16,7 +16,7 @@ from typing import Any
 
 import httpx
 from dependency_injector import containers, providers
-from faststream.rabbit import RabbitBroker
+from faststream.rabbit import Channel, RabbitBroker
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from payments.config import Settings
@@ -36,11 +36,16 @@ async def database_engine(database_url: str) -> AsyncIterator[AsyncEngine]:
     await engine.dispose()
 
 
+# on_return_raises: сообщение, которое брокер не смог доставить ни в одну очередь
+# (mandatory), — ошибка публикации, а не молчаливо подтверждённая потеря.
+PUBLISHING_CHANNEL = Channel(on_return_raises=True)
+
+
 async def connected_broker(
     rabbitmq_url: str, retry_delays_ms: tuple[int, ...]
 ) -> AsyncIterator[RabbitBroker]:
     """Брокер api: только публикует, поэтому логгер FastStream не нужен."""
-    broker = RabbitBroker(rabbitmq_url, logger=None)
+    broker = RabbitBroker(rabbitmq_url, logger=None, default_channel=PUBLISHING_CHANNEL)
     await broker.connect()
     await declare_topology(broker, retry_delays_ms)
     yield broker
@@ -114,6 +119,7 @@ class ApiContainer(containers.DeclarativeContainer):
         broker=broker,
         batch_size=settings.provided.outbox.batch_size,
         poll_interval=settings.provided.outbox.poll_interval,
+        max_backoff=settings.provided.outbox.max_backoff,
     )
     outbox_relay_task = providers.Resource(running_outbox_relay, relay=outbox_relay)
 
@@ -130,6 +136,7 @@ class ConsumerContainer(containers.DeclarativeContainer):
         RabbitBroker,
         settings.provided.rabbitmq.url,
         logger=providers.Object(logging.getLogger("faststream.rabbit")),
+        default_channel=providers.Object(PUBLISHING_CHANNEL),
     )
 
     gateway = providers.Singleton(

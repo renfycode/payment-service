@@ -3,7 +3,7 @@ from typing import Annotated
 import typer
 from alembic import command
 
-from payments.cli.common import load_migration_settings, new_typer, setup_logging
+from payments.cli.common import load_maintenance_settings, new_typer, setup_logging
 from payments.db.migrate import alembic_config
 
 app = new_typer("Database migrations (Alembic).")
@@ -11,7 +11,7 @@ app = new_typer("Database migrations (Alembic).")
 
 @app.callback()
 def _configure() -> None:
-    setup_logging(load_migration_settings())
+    setup_logging(load_maintenance_settings())
 
 
 @app.command()

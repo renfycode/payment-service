@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from payments.config import CONFIG_PATH_ENV, MigrationSettings, Settings
+from payments.config import CONFIG_PATH_ENV, MaintenanceSettings, Settings
 
 ROOT = Path(__file__).parents[2]
 
@@ -108,6 +108,6 @@ def test_migrations_need_only_database_secret(
     use_config(monkeypatch, tmp_path, '[database]\nhost = "db"\n[retry]\nmax_attempts = 5\n')
     monkeypatch.setenv("PAYMENTS__DATABASE__PASSWORD", "pw")
 
-    settings = MigrationSettings()  # pyright: ignore[reportCallIssue]
+    settings = MaintenanceSettings()  # pyright: ignore[reportCallIssue]
 
     assert settings.database.host == "db"

@@ -5,7 +5,7 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from payments.config import MigrationSettings
+from payments.config import MaintenanceSettings
 from payments.db.models import Base
 
 config = context.config
@@ -18,7 +18,7 @@ def get_database_url() -> str:
     # Логирование настраивает вызывающая сторона (CLI payments db …).
     if url := config.get_main_option("sqlalchemy.url"):
         return url
-    return MigrationSettings().database.url  # pyright: ignore[reportCallIssue]
+    return MaintenanceSettings().database.url  # pyright: ignore[reportCallIssue]
 
 
 def run_migrations_offline() -> None:

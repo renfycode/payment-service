@@ -74,6 +74,14 @@ class RabbitMQSettings(Section):
 class OutboxSettings(Section):
     poll_interval: float = Field(default=1.0, gt=0)
     batch_size: int = Field(default=100, gt=0)
+    # Пауза при недоступном брокере растёт как poll_interval * 2^n, но не выше max_backoff.
+    max_backoff: float = Field(default=30.0, gt=0)
+
+
+class ConsumerSettings(Section):
+    # Сколько сообщений один экземпляр обрабатывает одновременно (prefetch RabbitMQ).
+    # Ограничивает нагрузку на БД и HTTP-клиент и равномерно делит очередь между репликами.
+    prefetch: int = Field(default=10, ge=1)
 
 
 class RetrySettings(Section):
@@ -144,13 +152,17 @@ class Settings(_ConfigBase):
     rabbitmq: RabbitMQSettings
     webhook: WebhookSettings
     outbox: OutboxSettings = OutboxSettings()
+    consumer: ConsumerSettings = ConsumerSettings()
     retry: RetrySettings = RetrySettings()
     gateway: GatewaySettings = GatewaySettings()
     logging: LoggingSettings = LoggingSettings()
 
 
-class MigrationSettings(_ConfigBase):
-    """Только то, что нужно Alembic: миграциям не требуются секреты API и webhook."""
+class MaintenanceSettings(_ConfigBase):
+    """Только БД и логирование — для служебных команд (миграции, очистка outbox).
+
+    Им не нужны секреты API, webhook и RabbitMQ.
+    """
 
     # Остальные секции общего файла конфигурации здесь не нужны.
     model_config = SettingsConfigDict(extra="ignore")

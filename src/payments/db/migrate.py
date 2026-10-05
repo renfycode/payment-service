@@ -2,7 +2,7 @@
 
 Миграции лежат внутри пакета (payments/migrations) и находятся по имени пакета,
 поэтому команды работают из любого каталога — и в репозитории, и в Docker-образе.
-URL БД берётся из конфигурации сервиса (MigrationSettings) в migrations/env.py,
+URL БД берётся из конфигурации сервиса (MaintenanceSettings) в migrations/env.py,
 если не передан явно.
 """
 

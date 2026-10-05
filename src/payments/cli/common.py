@@ -10,7 +10,7 @@ from payments.config import (
     CONFIG_PATH_ENV,
     ENV_NESTED_DELIMITER,
     ENV_PREFIX,
-    MigrationSettings,
+    MaintenanceSettings,
     Settings,
 )
 from payments.logging_config import configure_logging
@@ -80,12 +80,12 @@ def load_settings() -> Settings:
         _config_failure(exc)
 
 
-def load_migration_settings() -> MigrationSettings:
+def load_maintenance_settings() -> MaintenanceSettings:
     try:
-        return MigrationSettings()  # pyright: ignore[reportCallIssue]
+        return MaintenanceSettings()  # pyright: ignore[reportCallIssue]
     except (ValidationError, ValueError, FileNotFoundError) as exc:
         _config_failure(exc)
 
 
-def setup_logging(settings: Settings | MigrationSettings) -> None:
+def setup_logging(settings: Settings | MaintenanceSettings) -> None:
     configure_logging(settings.logging.level, json=settings.logging.format == "json")
