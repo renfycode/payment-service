@@ -255,14 +255,21 @@ def verify(secret: str, headers: dict[str, str], body: bytes) -> bool:
 
 ## Разработка
 
-```bash
-uv sync                               # зависимости, включая dev
-uv run ruff check . && uv run ruff format --check .
-uv run mypy src tests                 # strict
-uvx pyright src tests                 # то же, что видит IDE (Pylance, Zed)
-uv run pytest tests/unit              # быстрые unit-тесты
-uv run pytest                         # всё, включая интеграционные (нужен Docker)
-```
+Основные действия собраны в `Makefile` (`make` без аргументов покажет список):
+
+| Команда | Что делает |
+|---|---|
+| `make install` | зависимости из `uv.lock`, включая dev |
+| `make format` | форматирование (ruff format) и безопасные автоисправления (ruff check --fix) |
+| `make lint` | проверка стиля и форматирования без изменения файлов |
+| `make typecheck` | mypy (strict) и pyright — тот же анализ, что видит IDE |
+| `make check` | `lint` + `typecheck` |
+| `make test-unit` | быстрые unit-тесты, без Docker |
+| `make test-integration` | интеграционные тесты (нужен Docker) |
+| `make test` | все тесты |
+| `make ci` | всё, что должно проходить в CI: `check` + `test` |
+
+Аргументы pytest передаются через `PYTEST_ARGS`, например `make test PYTEST_ARGS="-k idempotency -x"`.
 
 Интеграционные тесты (`tests/integration`) поднимают через testcontainers настоящие PostgreSQL и RabbitMQ, а также контейнер-получатель webhook (`tests/integration/webhook_receiver`). Получатель независимо проверяет подпись и умеет отвечать `500` на первые N запросов. Проверяются:
 - полный цикл платежа;
