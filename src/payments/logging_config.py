@@ -5,7 +5,7 @@
 
 Два формата:
 - pretty (по умолчанию) — цветной человекочитаемый вывод для разработки и docker compose logs;
-- json (LOG_JSON=true) — одна JSON-запись на строку для сборщиков логов.
+- json (format = "json" в секции [logging]) — одна JSON-запись на строку для сборщиков логов.
 """
 
 import json as jsonlib

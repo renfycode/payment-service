@@ -10,13 +10,15 @@
 docker compose up -d --build --wait
 ```
 
-Конфигурация берётся из `config/docker.toml`. Секреты для локального стенда заданы в `docker-compose.yml` значениями по умолчанию: API-ключ `dev-api-key`. Переопределить их можно переменными окружения при запуске: `PAYMENTS_API_KEY`, `PAYMENTS_WEBHOOK_SECRET`, `POSTGRES_PASSWORD`, `RABBITMQ_PASSWORD`.
+Конфигурация берётся из `config/docker.toml`. Секреты для локального стенда заданы в `docker-compose.yml` значениями по умолчанию: API-ключ `dev-api-key`, секрет подписи webhook `whsec_MRVnyabDOXIn1GLmVyP2VeXwy/Ts+AwO`, пароли Postgres и RabbitMQ `payments`. Переопределить их можно переменными окружения при запуске: `PAYMENTS_API_KEY`, `PAYMENTS_WEBHOOK_SECRET`, `POSTGRES_PASSWORD`, `RABBITMQ_PASSWORD`.
 
 | Сервис | Адрес |
 |---|---|
 | API | http://localhost:8000 |
 | Swagger UI | http://localhost:8000/docs |
 | RabbitMQ Management | http://localhost:15672 (`payments` / `payments`) |
+| PostgreSQL | `localhost:5432` (для запуска приложения на хосте) |
+| RabbitMQ AMQP | `localhost:5672` (для запуска приложения на хосте) |
 
 Миграции применяются автоматически при старте контейнера `api`.
 
@@ -144,9 +146,9 @@ def verify(secret: str, headers: dict[str, str], body: bytes) -> bool:
 - 7% — бизнес-отказ (`failed`, webhook отправляется, повторов нет);
 - 3% — технический сбой (повтор).
 
-Доли настраиваются.
+Задержка и доли настраиваются в секции `[gateway]`.
 
-**Retry.** 3 попытки на этап, то есть первая и 2 повтора с экспоненциальной задержкой `RETRY_BASE_DELAY · 2ⁿ⁻¹` (2 с и 4 с по умолчанию). Повторы реализованы очередями-задержками с TTL и dead-letter обратно в `payments.new`: consumer не блокируется на ожидании, повторы переживают его рестарт. Под каждую задержку своя очередь — в одной очереди с разными TTL сообщения истекают только из головы.
+**Retry.** 3 попытки на этап, то есть первая и 2 повтора с экспоненциальной задержкой `base_delay · 2ⁿ⁻¹` (2 с и 4 с по умолчанию). Число попыток и базовая задержка настраиваются в секции `[retry]`. Повторы реализованы очередями-задержками с TTL и dead-letter обратно в `payments.new`: consumer не блокируется на ожидании, повторы переживают его рестарт. Под каждую задержку своя очередь — в одной очереди с разными TTL сообщения истекают только из головы.
 
 У этапов «шлюз» и «webhook» независимые счётчики (заголовки `x-stage`, `x-attempt`): сбои шлюза не съедают попытки доставки webhook.
 
@@ -220,6 +222,7 @@ def verify(secret: str, headers: dict[str, str], body: bytes) -> bool:
 uv sync                               # зависимости, включая dev
 uv run ruff check . && uv run ruff format --check .
 uv run mypy src tests                 # strict
+uvx pyright src tests migrations      # то же, что видит IDE (Pylance, Zed)
 uv run pytest tests/unit              # быстрые unit-тесты
 uv run pytest                         # всё, включая интеграционные (нужен Docker)
 ```
@@ -244,8 +247,8 @@ export PAYMENTS_CONFIG=config/local.toml \
        PAYMENTS__DATABASE__PASSWORD=payments \
        PAYMENTS__RABBITMQ__PASSWORD=payments
 uv run alembic upgrade head
-uv run uvicorn payments.api.app:create_app --factory --reload
-uv run python -m payments.consumer
+uv run uvicorn payments.api.app:create_app --factory --reload   # терминал 1
+uv run python -m payments.consumer                              # терминал 2, с теми же переменными
 ```
 
 ## Структура
@@ -259,6 +262,7 @@ src/payments/
 ├── services.py     # создание/получение платежа, идемпотентность
 ├── schemas.py      # контракты: HTTP, сообщения брокера, webhook
 ├── domain.py       # перечисления и доменные ошибки
+├── logging_config.py  # loguru: цветной вывод / JSON, перехват стандартного logging
 └── config.py       # настройки: TOML + секреты из окружения
 config/             # TOML-конфигурация по окружениям
 migrations/         # Alembic
